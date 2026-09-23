@@ -446,6 +446,12 @@ This document does not assume any redistribution is automatically permitted.
 
 This packaging cleanup should improve Linux as much as Windows.
 
+The detailed Linux distribution plan lives in
+[docs/crimson_linux_distribution_strategy.md](/home/delahantyj@hhmi.org/gitrepos/crimson-ui-monolith/docs/crimson_linux_distribution_strategy.md).
+That document treats `/opt` and module files as acceptable builder or
+admin-managed workstation mechanisms, but not as the final user-facing
+installation model.
+
 ### Core Linux Principles
 
 - Do not hard-code `/opt`, `/usr/local`, or workstation-specific library roots

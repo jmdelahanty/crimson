@@ -1,0 +1,24 @@
+
+xwininfo: Window id: 0x1200007 "Red"
+
+  Absolute upper-left X:  316
+  Absolute upper-left Y:  562
+  Relative upper-left X:  14
+  Relative upper-left Y:  49
+  Width: 1920
+  Height: 1080
+  Depth: 24
+  Visual: 0x53
+  Visual Class: TrueColor
+  Border width: 0
+  Class: InputOutput
+  Colormap: 0x1200006 (not installed)
+  Bit Gravity State: ForgetGravity
+  Window Gravity State: NorthWestGravity
+  Backing Store State: NotUseful
+  Save Under State: no
+  Map State: IsViewable
+  Override Redirect State: no
+  Corners:  +316+562  -3364+562  -3364-2198  +316-2198
+  -geometry 1920x1080+316+562
+

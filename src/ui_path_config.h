@@ -31,6 +31,16 @@ std::optional<std::filesystem::path> ResolveCrimsonResourcePath(
     const std::filesystem::path& relative_path);
 std::filesystem::path GetDefaultCrimsonBufferDumpRoot();
 
+std::optional<std::filesystem::path> GetCrimsonUserUiPathConfigPath();
+
+bool NormalizeUiPathConfig(const UiPathConfig& input,
+                           UiPathConfig& normalized,
+                           std::string& error_message);
+
+bool SaveUserUiPathConfig(const UiPathConfig& config,
+                          std::filesystem::path& saved_path,
+                          std::string& error_message);
+
 UiPathConfig LoadUiPathConfig(const std::filesystem::path& current_working_dir,
                               const std::filesystem::path& argv0_path);
 

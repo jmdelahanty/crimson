@@ -2,14 +2,18 @@
 #include "AppDecUtils.h"
 #include "global.h"
 #include "debug_flags.h"
+#include "decoder_seek_bookkeeping.h"
+#include "frame_slot.h"
+#include "ColorSpace.h"
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <limits>
 #include <memory>
 
 namespace {
-
 void clear_decoder_error_message(const std::string& cam_name) {
     std::lock_guard<std::mutex> lock(g_decoder_error_mutex);
     g_decoder_error_messages.erase(cam_name);
@@ -29,8 +33,7 @@ void record_decoder_error_message(const std::string& cam_name,
     std::cerr << "[Decoder] Fatal error in " << cam_name << ": "
               << message << std::endl;
 }
-
-} // namespace
+}  // namespace
 
 inline double decoder_duration_ms(std::chrono::steady_clock::duration duration) {
     return std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
@@ -103,123 +106,186 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
         }
     };
     try {
-        ck(cuInit(0));
-        CUcontext cuContext = NULL;
-        createCudaContext(&cuContext, dc_context->gpu_index, 0);
-        size_t nVideoBytes = 0;
-        PacketData pktinfo;
+    ck(cuInit(0));
+    CUcontext cuContext = NULL;
+    createCudaContext(&cuContext, dc_context->gpu_index, 0);
+    size_t nVideoBytes = 0;
+    PacketData pktinfo;
+    const int stream_color_space =
+        static_cast<int>(demuxer->GetColorSpace());
+    const int stream_color_range =
+        static_cast<int>(demuxer->GetColorRange());
 
-        const cudaVideoCodec codec_id = FFmpeg2NvCodecId(demuxer->GetVideoCodec());
-        auto make_decoder = [&]() {
-            return std::make_unique<NvDecoder>(cuContext, true, codec_id);
-        };
-        std::unique_ptr<NvDecoder> dec = make_decoder();
-        auto decoder_perf = [&]() -> std::shared_ptr<DecoderPerfSample> {
-            std::lock_guard<std::mutex> lock(g_decoder_perf_mutex);
-            auto &sample = decoder_perf_samples[cam_name];
-            if (!sample) {
-                sample = std::make_shared<DecoderPerfSample>();
-            }
-            return sample;
-        }();
-        const bool recreate_decoder_on_seek = []() {
-            const char *env = std::getenv("CRIMSON_RECREATE_DECODER_ON_SEEK");
-            if (!env) {
-                return false;
-            }
-            return std::strcmp(env, "0") != 0;
-        }();
-        const bool allow_boundary_fallback = false;
-        std::cout << "[Decoder] " << cam_name
-                  << " recreate_decoder_on_seek="
-                  << (recreate_decoder_on_seek ? "true" : "false")
-                  << " boundary_fallback="
-                  << (allow_boundary_fallback ? "true" : "false") << std::endl;
-        int nWidth = 0, nHeight = 0;
-
-        int nFrameReturned = 0, nFrame = 0, iMatrix = 0;
-        uint8_t *pVideo = nullptr;
-        uint8_t *pFrame;
-
-        int buffer_head = 0;
-        bool pending_seek_done = false;
-        bool pending_seek_was_accurate = false;
-        uint64_t pending_seek_id = 0;
-
-        bool seek_success_flag;
-        bool demux_success;
-
-        double video_length = demuxer->GetDuration();
-        double frame_rate = demuxer->GetFramerate();
-        std::cout << "Video framerate: " << frame_rate << std::endl;
-        std::cout << "Video length: " << video_length << std::endl;
-
-        if (demuxer->GetNumFrames() == 0) {
-            dc_context->estimated_num_frames = int(video_length * frame_rate);
-        } else {
-            dc_context->estimated_num_frames = demuxer->GetNumFrames() - 1;
+    const cudaVideoCodec codec_id = FFmpeg2NvCodecId(demuxer->GetVideoCodec());
+    auto make_decoder = [&]() {
+        return std::make_unique<NvDecoder>(cuContext, true, codec_id);
+    };
+    std::unique_ptr<NvDecoder> dec = make_decoder();
+    auto decoder_perf = [&]() -> std::shared_ptr<DecoderPerfSample> {
+        std::lock_guard<std::mutex> lock(g_decoder_perf_mutex);
+        auto &sample = decoder_perf_samples[cam_name];
+        if (!sample) {
+            sample = std::make_shared<DecoderPerfSample>();
         }
-
-        std::cout << "estimated_num_frames:" << dc_context->estimated_num_frames
-                  << std::endl;
-        int size_in_bytes;
-        bool skip_first_decode_after_seek = false;
-        int seek_debug_frames_to_log = 0;
-        uint64_t seek_discard_count = 0;
-        const bool buffer_requires_rgba =
-            use_cpu_buffer || (size_of_buffer > 0 &&
-                               display_buffer[0].format ==
-                                   PictureBufferFormat::RGBA32);
-        auto seek_requested = [&]() -> bool {
-            std::lock_guard<std::mutex> lock(g_seek_info_mutex);
-            return seek_info->use_seek;
-        };
-        uint64_t active_seek_id = 0;
-        auto mark_seek_done = [&](uint64_t settled_frame) -> bool {
-            std::lock_guard<std::mutex> lock(g_seek_info_mutex);
-            // If a newer request arrived while we processed this one, do not
-            // overwrite it with stale completion state.
-            if (seek_info->use_seek) {
-                return false;
-            }
-            seek_info->seek_frame = settled_frame;
-            seek_info->settled_seek_id = active_seek_id;
-            seek_info->seek_done = true;
-            return true;
-        };
-        auto mapTimestampToFrameNumber = [&](int64_t timestamp,
-                                             int64_t fallback_frame) -> int64_t {
-            if (timestamp >= 0) {
-                const int64_t frame_from_ts = demuxer->FrameNumberFromTs(timestamp);
-                if (frame_from_ts >= 0) {
-                    return frame_from_ts;
-                }
-            }
-            return fallback_frame;
-        };
-        auto discard_decoded_frames_until =
-            [&](uint64_t &decode_frame_cursor, uint64_t target_frame) -> bool {
-            while (nFrameReturned > 0) {
-                if (decode_frame_cursor >= target_frame) {
-                    // Keep target frame (or nearest frame past it) in decoder
-                    // output queue for the normal write path.
-                    skip_first_decode_after_seek = true;
-                    return true;
-                }
-                int64_t discarded_timestamp = 0;
-                dec->GetFrame(&discarded_timestamp);
-                nFrameReturned--;
-                ++seek_discard_count;
-                const int64_t fallback_frame =
-                    static_cast<int64_t>(decode_frame_cursor);
-                const int64_t mapped_frame =
-                    mapTimestampToFrameNumber(discarded_timestamp, fallback_frame);
-                const int64_t next_frame = std::max(mapped_frame + 1, fallback_frame + 1);
-                decode_frame_cursor = static_cast<uint64_t>(std::max<int64_t>(0, next_frame));
-            }
+        return sample;
+    }();
+    const bool recreate_decoder_on_seek = []() {
+        const char *env = std::getenv("CRIMSON_RECREATE_DECODER_ON_SEEK");
+        if (!env) {
             return false;
-        };
-        do {
+        }
+        return std::strcmp(env, "0") != 0;
+    }();
+    const bool allow_boundary_fallback = false;
+    std::cout << "[Decoder] " << cam_name
+              << " recreate_decoder_on_seek="
+              << (recreate_decoder_on_seek ? "true" : "false")
+              << " boundary_fallback="
+              << (allow_boundary_fallback ? "true" : "false")
+              << " ffmpeg_color_space=" << stream_color_space
+              << " ffmpeg_color_range=" << stream_color_range << std::endl;
+    int nWidth = 0, nHeight = 0;
+
+    int nFrameReturned = 0, nFrame = 0, iMatrix = 0;
+    uint8_t *pVideo = nullptr;
+    uint8_t *pFrame;
+
+    int buffer_head = 0;
+    bool pending_seek_done = false;
+    bool pending_seek_was_accurate = false;
+    uint64_t pending_seek_id = 0;
+
+    bool seek_success_flag;
+    bool demux_success;
+
+    double video_length = demuxer->GetDuration();
+    double frame_rate = demuxer->GetFramerate();
+    std::cout << "Video framerate: " << frame_rate << std::endl;
+    std::cout << "Video length: " << video_length << std::endl;
+
+    if (demuxer->GetNumFrames() == 0) {
+        dc_context->estimated_num_frames = int(video_length * frame_rate);
+    } else {
+        dc_context->estimated_num_frames = demuxer->GetNumFrames() - 1;
+    }
+
+    std::cout << "estimated_num_frames:" << dc_context->estimated_num_frames
+              << std::endl;
+    int size_in_bytes;
+    bool skip_first_decode_after_seek = false;
+    int seek_debug_frames_to_log = 0;
+    uint64_t seek_discard_count = 0;
+    const bool buffer_requires_rgba =
+        use_cpu_buffer || (size_of_buffer > 0 &&
+                           display_buffer[0].format ==
+                               FramePixelFormat::RGBA8);
+    auto seek_requested = [&]() -> bool {
+        std::lock_guard<std::mutex> lock(g_seek_info_mutex);
+        return seek_info->use_seek;
+    };
+    uint64_t active_seek_id = 0;
+    auto publishFrameNumber = [&](uint64_t local_frame) -> int64_t {
+        std::shared_ptr<const std::vector<int64_t>> frame_map;
+        {
+            std::lock_guard<std::mutex> lock(g_seek_info_mutex);
+            frame_map = seek_info->frame_number_map;
+        }
+        return crimson::playback::publishDecoderFrameNumber(
+            local_frame, frame_map.get());
+    };
+    auto publishFrameNumberInt = [&](uint64_t local_frame) -> int {
+        const int64_t frame = publishFrameNumber(local_frame);
+        return static_cast<int>(
+            std::clamp<int64_t>(frame, 0, std::numeric_limits<int>::max()));
+    };
+    auto usesExternalFrameNumberMap = [&]() -> bool {
+        std::lock_guard<std::mutex> lock(g_seek_info_mutex);
+        return seek_info->frame_number_map != nullptr;
+    };
+    auto mark_seek_done = [&](uint64_t settled_local_frame) -> bool {
+        const int64_t settled_frame = publishFrameNumber(settled_local_frame);
+        std::lock_guard<std::mutex> lock(g_seek_info_mutex);
+        // If a newer request arrived while we processed this one, do not
+        // overwrite it with stale completion state.
+        if (seek_info->use_seek) {
+            return false;
+        }
+        seek_info->seek_frame = static_cast<uint64_t>(
+            std::max<int64_t>(0, settled_frame));
+        seek_info->settled_seek_id = active_seek_id;
+        seek_info->seek_done = true;
+        return true;
+    };
+    double last_demux_ms = 0.0;
+    double last_decode_ms = 0.0;
+    int last_decode_returned = 0;
+    bool last_demux_success = false;
+    auto timedDemux = [&]() -> bool {
+        const auto demux_start = std::chrono::steady_clock::now();
+        const bool ok = demuxer->Demux(pVideo, nVideoBytes, pktinfo);
+        last_demux_ms =
+            decoder_duration_ms(std::chrono::steady_clock::now() -
+                                demux_start);
+        last_demux_success = ok;
+        decoder_perf->demux_ms.store(last_demux_ms);
+        decoder_perf->demux_success.store(ok ? 1 : 0);
+        return ok;
+    };
+    auto timedDecode = [&](uint8_t* data,
+                           size_t byte_count,
+                           int flags = 0,
+                           int64_t timestamp = 0) -> int {
+        const auto decode_start = std::chrono::steady_clock::now();
+        const int returned = dec->Decode(data, byte_count, flags, timestamp);
+        last_decode_ms =
+            decoder_duration_ms(std::chrono::steady_clock::now() -
+                                decode_start);
+        last_decode_returned = returned;
+        decoder_perf->decode_ms.store(last_decode_ms);
+        decoder_perf->decode_returned.store(returned);
+        return returned;
+    };
+    auto mapTimestampToFrameNumber = [&](int64_t timestamp,
+                                         int64_t fallback_frame) -> int64_t {
+        if (usesExternalFrameNumberMap()) {
+            return fallback_frame;
+        }
+        if (timestamp >= 0) {
+            const int64_t frame_from_ts = demuxer->FrameNumberFromTs(timestamp);
+            if (frame_from_ts >= 0) {
+                return frame_from_ts;
+            }
+        }
+        return fallback_frame;
+    };
+    auto discard_decoded_frames_until =
+        [&](uint64_t &decode_frame_cursor, uint64_t target_frame) -> bool {
+        while (nFrameReturned > 0) {
+            if (crimson::playback::queuedDecoderFrameReachedTarget(
+                    decode_frame_cursor, target_frame)) {
+                // Keep target frame (or nearest frame past it) in decoder
+                // output queue for the normal write path.  Using >= instead
+                // of == guards against the cursor overshooting the target by
+                // one due to timestamp-to-frame rounding in FrameNumberFromTs
+                // (AV_ROUND_NEAR_INF).  Without this, the loop would never
+                // match the target and decode through the rest of the file.
+                skip_first_decode_after_seek = true;
+                return true;
+            }
+            int64_t discarded_timestamp = 0;
+            dec->GetFrame(&discarded_timestamp);
+            nFrameReturned--;
+            ++seek_discard_count;
+            const int64_t mapped_frame =
+                mapTimestampToFrameNumber(
+                    discarded_timestamp,
+                    static_cast<int64_t>(decode_frame_cursor));
+            decode_frame_cursor = crimson::playback::advanceDecoderSeekCursor(
+                decode_frame_cursor, mapped_frame);
+        }
+        return false;
+    };
+    do {
         bool has_seek_request = false;
         uint64_t requested_frame = 0;
         bool seek_accurate = false;
@@ -314,8 +380,7 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                 //     decoder_clear_buffer_with_constant_image(display_buffer[i].frame,
                 //     3208, 2200);
                 // }
-                display_buffer[i].available_to_write = true;
-                display_buffer[i].frame_number = -1;
+                frameSlotResetForWrite(display_buffer[i]);
                 if (display_buffer[i].frame_bytes > 0 &&
                     display_buffer[i].frame) {
                     if (use_cpu_buffer) {
@@ -326,11 +391,10 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                                       display_buffer[i].frame_bytes));
                     }
                 }
-                display_buffer[i].color_matrix = ColorSpaceStandard_BT709;
             }
             // Flush parser/display-queue state before seek discontinuity so
             // stale pre-seek frames cannot leak into post-seek output.
-            nFrameReturned = dec->Decode(NULL, 0, 0);
+            nFrameReturned = timedDecode(nullptr, 0, 0);
             while (nFrameReturned > 0) {
                 dec->GetFrame();
                 nFrameReturned--;
@@ -349,7 +413,7 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                           << " first_decode_flags=" << seek_decode_flags
                           << std::endl;
             }
-            nFrameReturned = dec->Decode(
+            nFrameReturned = timedDecode(
                 pVideo, nVideoBytes, seek_decode_flags, pktinfo.pts);
 
             uint64_t decode_frame_cursor = requested_frame;
@@ -372,7 +436,7 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                           << " dts=" << pktinfo.dts << std::endl;
             }
 
-            uint64_t settled_seek_frame = decode_frame_cursor;
+            crimson::playback::DecoderSeekBookkeeping seek_bookkeeping;
             bool accurate_reached_target = false;
             uint64_t accurate_demux_attempts = 0;
             uint64_t accurate_decode_calls = 0;
@@ -386,8 +450,7 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                         discard_decoded_frames_until(decode_frame_cursor, requested_frame);
                     while (!reached_target) {
                         ++accurate_demux_attempts;
-                        demux_success =
-                            demuxer->Demux(pVideo, nVideoBytes, pktinfo);
+                        demux_success = timedDemux();
                         if (!demux_success) {
                             // Some streams intermittently fail to demux the exact
                             // terminal packet for a seek target. If we are already
@@ -401,7 +464,8 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                                 if (nFrameReturned == 0) {
                                     // Try draining any frame that may already be queued
                                     // in the decoder before we accept boundary fallback.
-                                    nFrameReturned = dec->Decode(NULL, 0);
+                                    nFrameReturned =
+                                        timedDecode(nullptr, 0);
                                 }
                                 skip_first_decode_after_seek = (nFrameReturned > 0);
                                 std::cout
@@ -417,12 +481,12 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                                       << " target_frame=" << requested_frame
                                       << " cursor=" << decode_frame_cursor
                                       << std::endl;
-                            nFrameReturned = dec->Decode(NULL, 0);
+                            nFrameReturned = timedDecode(nullptr, 0);
                             ++accurate_decode_calls;
                             dc_context->total_num_frame = nFrame + nFrameReturned;
                         } else {
-                            nFrameReturned =
-                                dec->Decode(pVideo, nVideoBytes, 0, pktinfo.pts);
+                            nFrameReturned = timedDecode(
+                                pVideo, nVideoBytes, 0, pktinfo.pts);
                             ++accurate_decode_calls;
                         }
                         if (!demux_success && nFrameReturned == 0) {
@@ -436,14 +500,13 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                     if (!skip_first_decode_after_seek) {
                         while (nFrameReturned == 0) {
                             ++accurate_demux_attempts;
-                            demux_success =
-                                demuxer->Demux(pVideo, nVideoBytes, pktinfo);
+                            demux_success = timedDemux();
                             if (!demux_success) {
                                 // End of stream/discontinuity while already at
                                 // target. Drain delayed frames from decoder
                                 // before giving up so seek can still settle
                                 // with a queued frame when available.
-                                nFrameReturned = dec->Decode(NULL, 0);
+                                nFrameReturned = timedDecode(nullptr, 0);
                                 ++accurate_decode_calls;
                                 if (seek_accurate) {
                                     if (crimson_seek_debug_logs_enabled()) std::cout << "[SeekAccurate] cam=" << cam_name
@@ -453,23 +516,26 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                                 }
                                 break;
                             }
-                            nFrameReturned =
-                                dec->Decode(pVideo, nVideoBytes, 0, pktinfo.pts);
+                            nFrameReturned = timedDecode(
+                                pVideo, nVideoBytes, 0, pktinfo.pts);
                             ++accurate_decode_calls;
                         }
                         skip_first_decode_after_seek = (nFrameReturned > 0);
                     }
                 }
                 if (!reached_target) {
-                    settled_seek_frame = decode_frame_cursor;
                     skip_first_decode_after_seek = (nFrameReturned > 0);
                 }
                 accurate_reached_target = reached_target;
+                seek_bookkeeping =
+                    crimson::playback::finalizeDecoderSeekBookkeeping(
+                        decode_frame_cursor);
                 if (crimson_seek_debug_logs_enabled()) std::cout << "[SeekAccurate] cam=" << cam_name
                           << " request id=" << active_seek_id
                           << " result reached_target="
                           << (accurate_reached_target ? "true" : "false")
-                          << " settled=" << settled_seek_frame
+                          << " settled="
+                          << seek_bookkeeping.settled_local_frame
                           << " cursor=" << decode_frame_cursor
                           << " nFrameReturned=" << nFrameReturned
                           << " demux_attempts=" << accurate_demux_attempts
@@ -477,23 +543,27 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                           << " discarded=" << seek_discard_count
                           << std::endl;
             } else {
-                settled_seek_frame = decode_frame_cursor;
                 skip_first_decode_after_seek = (nFrameReturned > 0);
+                seek_bookkeeping =
+                    crimson::playback::finalizeDecoderSeekBookkeeping(
+                        decode_frame_cursor);
             }
 
             // dec.setReconfigParams(NULL, NULL);
             buffer_head = 0;
-            nFrame = static_cast<int>(settled_seek_frame);
+            const uint64_t settled_seek_frame =
+                seek_bookkeeping.settled_local_frame;
+            nFrame = seek_bookkeeping.next_local_frame;
             if (nFrameReturned > 0) {
                 latest_decoded_frame[cam_name].store(
-                    static_cast<int>(settled_seek_frame));
+                    publishFrameNumberInt(settled_seek_frame));
             } else {
                 // No decoded frame is currently queued for display after this
                 // seek operation, so keep latest_decoded_frame invalid until a
                 // real frame lands in the ring buffer.
                 latest_decoded_frame[cam_name].store(-1);
             }
-            display_buffer[0].frame_number = -1;
+            frameSlotResetForWrite(display_buffer[0]);
             // If no frame is currently queued (or this window is not actively
             // decoding), acknowledge seek completion now.  When nFrameReturned
             // is zero there is nothing to write, so deferring would leave
@@ -531,35 +601,17 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
             static thread_local bool logged_idle = false;
             if (window_need_decoding[cam_name].load()) {
                 logged_idle = false;
-                double demux_call_ms = 0.0;
-                double decode_submit_call_ms = 0.0;
                 if (!skip_first_decode_after_seek) {
-                    const auto demux_call_start =
-                        std::chrono::steady_clock::now();
-                    demux_success =
-                        demuxer->Demux(pVideo, nVideoBytes, pktinfo);
-                    demux_call_ms = decoder_duration_ms(
-                        std::chrono::steady_clock::now() -
-                        demux_call_start);
+                    demux_success = timedDemux();
                     if (!demux_success) {
                         // end of stream
                         // std::cout << "Demux error..." << std::endl;
-                        const auto decode_submit_start =
-                            std::chrono::steady_clock::now();
-                        nFrameReturned =
-                            dec->Decode(NULL, 0, CUVID_PKT_DISCONTINUITY);
-                        decode_submit_call_ms = decoder_duration_ms(
-                            std::chrono::steady_clock::now() -
-                            decode_submit_start);
+                        nFrameReturned = timedDecode(
+                            nullptr, 0, CUVID_PKT_DISCONTINUITY);
                         dc_context->total_num_frame = nFrame + nFrameReturned;
                     } else {
-                        const auto decode_submit_start =
-                            std::chrono::steady_clock::now();
-                        nFrameReturned =
-                            dec->Decode(pVideo, nVideoBytes, 0, pktinfo.pts);
-                        decode_submit_call_ms = decoder_duration_ms(
-                            std::chrono::steady_clock::now() -
-                            decode_submit_start);
+                        nFrameReturned = timedDecode(
+                            pVideo, nVideoBytes, 0, pktinfo.pts);
                     }
                 } else {
                     skip_first_decode_after_seek = false;
@@ -584,16 +636,6 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                     double decode_wait_ms = 0.0;
                     double decode_convert_ms = 0.0;
                     double decode_write_ms = 0.0;
-                    const double decode_demux_ms =
-                        (nFrameReturned > 0)
-                            ? (demux_call_ms /
-                               static_cast<double>(nFrameReturned))
-                            : demux_call_ms;
-                    const double decode_submit_ms =
-                        (nFrameReturned > 0)
-                            ? (decode_submit_call_ms /
-                               static_cast<double>(nFrameReturned))
-                            : decode_submit_call_ms;
                     int64_t frame_timestamp = 0;
                     pFrame = dec->GetFrame(&frame_timestamp);
                     iMatrix = dec->GetVideoFormatInfo()
@@ -603,23 +645,46 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                     if (mapped_frame_num < 0) {
                         mapped_frame_num = nFrame;
                     }
-                    const int assigned_frame_num = static_cast<int>(mapped_frame_num);
-                    const PictureBufferFormat slot_format =
-                        display_buffer[buffer_head].format;
+                    const int local_frame_num = static_cast<int>(
+                        std::clamp<int64_t>(
+                            mapped_frame_num, 0,
+                            std::numeric_limits<int>::max()));
+                    const int assigned_frame_num =
+                        publishFrameNumberInt(static_cast<uint64_t>(
+                            local_frame_num));
+                    const auto wait_start = std::chrono::steady_clock::now();
+                    std::optional<FrameSlotWriteLease> write_lease;
+                    while (!(dc_context->stop_flag) && !seek_requested()) {
+                        write_lease =
+                            frameSlotAcquireWritable(display_buffer[buffer_head]);
+                        if (write_lease.has_value()) {
+                            break;
+                        }
+                        // The queue is full until the GUI releases this slot.
+                        std::this_thread::sleep_for(
+                            std::chrono::milliseconds(1));
+                    }
+                    decode_wait_ms += decoder_duration_ms(
+                        std::chrono::steady_clock::now() - wait_start);
+                    if (!write_lease.has_value()) {
+                        continue;
+                    }
+
+                    PictureBuffer& writable_slot = write_lease->slot();
+                    const PictureBufferFormat slot_format = writable_slot.format;
                     const int slot_pitch =
-                        display_buffer[buffer_head].pitch_bytes > 0
-                            ? display_buffer[buffer_head].pitch_bytes
-                            : dec->GetWidth();
+                        writable_slot.pitch_bytes > 0 ? writable_slot.pitch_bytes
+                                                       : dec->GetWidth();
                     const size_t slot_frame_bytes =
-                        display_buffer[buffer_head].frame_bytes > 0
-                            ? display_buffer[buffer_head].frame_bytes
+                        writable_slot.frame_bytes > 0
+                            ? writable_slot.frame_bytes
                             : static_cast<size_t>(dec->GetFrameSize());
                     auto convert_to_rgba = [&]() {
                         const auto convert_start = std::chrono::steady_clock::now();
                         Nv12ToColor32<RGBA32>(
                             pFrame, dec->GetWidth(), (uint8_t *)pTmpImage,
                             4 * dec->GetWidth(), dec->GetWidth(),
-                            dec->GetHeight(), iMatrix);
+                            dec->GetHeight(), iMatrix, stream_color_range);
                         decode_convert_ms += decoder_duration_ms(
                             std::chrono::steady_clock::now() - convert_start);
                     };
@@ -627,96 +692,81 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                         const auto write_start = std::chrono::steady_clock::now();
                         if (use_cpu_buffer) {
                             decoder_get_image_from_gpu(
-                                pTmpImage, display_buffer[buffer_head].frame,
+                                pTmpImage, writable_slot.frame,
                                 4 * dec->GetWidth(), dec->GetHeight());
                         } else if (slot_format ==
-                                   PictureBufferFormat::RGBA32) {
-                            cudaMemcpy(display_buffer[buffer_head].frame,
+                                   FramePixelFormat::RGBA8) {
+                            cudaMemcpy(writable_slot.frame,
                                        (uint8_t *)pTmpImage, size_in_bytes,
                                        cudaMemcpyDeviceToDevice);
                         } else {
-                            cudaMemcpy(display_buffer[buffer_head].frame,
+                            cudaMemcpy(writable_slot.frame,
                                        pFrame, slot_frame_bytes,
                                        cudaMemcpyDeviceToDevice);
                         }
                         decode_write_ms += decoder_duration_ms(
                             std::chrono::steady_clock::now() - write_start);
                     };
-                    if (slot_format == PictureBufferFormat::RGBA32) {
+                    if (slot_format == FramePixelFormat::RGBA8) {
                         convert_to_rgba();
                     }
-                    if (nFrame == 0) {
-                        write_buffered_frame();
-                        display_buffer[buffer_head].available_to_write = false;
-                        dc_context->decoding_flag = true;
-                        display_buffer[buffer_head].frame_number = assigned_frame_num;
-                        display_buffer[buffer_head].pitch_bytes = slot_pitch;
-                        display_buffer[buffer_head].frame_bytes = slot_frame_bytes;
-                        display_buffer[buffer_head].color_matrix = iMatrix;
-                        latest_decoded_frame[cam_name].store(assigned_frame_num);
-                        if (pending_seek_done) {
-                            const bool marked =
-                                mark_seek_done(static_cast<uint64_t>(assigned_frame_num));
-                            if (pending_seek_was_accurate) {
-                                if (crimson_seek_debug_logs_enabled()) std::cout << "[SeekAccurate] cam=" << cam_name
-                                          << " request id=" << pending_seek_id
-                                          << " done_on_frame_write frame="
-                                          << assigned_frame_num
-                                          << " marked=" << (marked ? "true" : "false")
-                                          << std::endl;
-                            }
-                            pending_seek_done = false;
-                            pending_seek_was_accurate = false;
-                        }
-                    } else {
-                        const auto wait_start = std::chrono::steady_clock::now();
-                        while (
-                            !display_buffer[buffer_head].available_to_write &&
-                            !(dc_context->stop_flag) &&
-                            !seek_requested()) {
-                            // if the next frame hasn't been displayed, the
-                            // queue is full, sleep std::cout << "thread wait, "
-                            // << display_buffer[buffer_head].available_to_write
-                            // << ", " << buffer_head << ", " <<
-                            // display_buffer[buffer_head].frame_number <<
-                            // std::endl;
-                            std::this_thread::sleep_for(
-                                std::chrono::milliseconds(1));
-                        }
-                        decode_wait_ms += decoder_duration_ms(
-                            std::chrono::steady_clock::now() - wait_start);
-                        write_buffered_frame();
+                    write_buffered_frame();
 
-                        display_buffer[buffer_head].available_to_write = false;
-                        display_buffer[buffer_head].frame_number = assigned_frame_num;
-                        display_buffer[buffer_head].pitch_bytes = slot_pitch;
-                        display_buffer[buffer_head].frame_bytes = slot_frame_bytes;
-                        display_buffer[buffer_head].color_matrix = iMatrix;
-                        latest_decoded_frame[cam_name].store(assigned_frame_num);
-                        if (pending_seek_done) {
-                            const bool marked =
-                                mark_seek_done(static_cast<uint64_t>(assigned_frame_num));
-                            if (pending_seek_was_accurate) {
-                                if (crimson_seek_debug_logs_enabled()) std::cout << "[SeekAccurate] cam=" << cam_name
-                                          << " request id=" << pending_seek_id
-                                          << " done_on_frame_write frame="
-                                          << assigned_frame_num
-                                          << " marked=" << (marked ? "true" : "false")
-                                          << std::endl;
-                            }
-                            pending_seek_done = false;
-                            pending_seek_was_accurate = false;
+                    FrameSlotMetadata published_metadata;
+                    published_metadata.stream_id = cam_name;
+                    published_metadata.frame_number = assigned_frame_num;
+                    published_metadata.local_frame_number = local_frame_num;
+                    published_metadata.frame_pts = frame_timestamp;
+                    published_metadata.time_base = {
+                        demuxer->GetTimebaseNumerator(),
+                        demuxer->GetTimebaseDenominator()};
+                    published_metadata.frame_source_code =
+                        pending_seek_done ? 1 : 2;
+                    published_metadata.width = dec->GetWidth();
+                    published_metadata.height = dec->GetHeight();
+                    published_metadata.pitch_bytes = slot_pitch;
+                    published_metadata.frame_bytes = slot_frame_bytes;
+                    published_metadata.color_matrix = iMatrix;
+                    published_metadata.color_range = stream_color_range;
+                    published_metadata.pixel_format = slot_format;
+                    published_metadata.surface_backend =
+                        use_cpu_buffer ? FrameSurfaceBackend::Cpu
+                                       : FrameSurfaceBackend::NvidiaCuda;
+                    published_metadata.ownership =
+                        FrameSurfaceOwnership::SlotOwned;
+                    published_metadata.lifetime =
+                        FrameSurfaceLifetime::UntilReadLeaseReleased;
+                    write_lease->publish(published_metadata);
+                    dc_context->decoding_flag = true;
+                    latest_decoded_frame[cam_name].store(assigned_frame_num);
+                    if (pending_seek_done) {
+                        const bool marked =
+                            mark_seek_done(static_cast<uint64_t>(local_frame_num));
+                        if (pending_seek_was_accurate) {
+                            if (crimson_seek_debug_logs_enabled()) std::cout << "[SeekAccurate] cam=" << cam_name
+                                      << " request id=" << pending_seek_id
+                                      << " done_on_frame_write frame="
+                                      << assigned_frame_num
+                                      << " marked=" << (marked ? "true" : "false")
+                                      << std::endl;
                         }
+                        pending_seek_done = false;
+                        pending_seek_was_accurate = false;
                     }
-                    decoder_perf->demux_ms.store(decode_demux_ms);
-                    decoder_perf->decode_submit_ms.store(decode_submit_ms);
                     decoder_perf->nv12_to_rgba_ms.store(decode_convert_ms);
                     decoder_perf->buffer_wait_ms.store(decode_wait_ms);
                     decoder_perf->frame_write_ms.store(decode_write_ms);
                     decoder_perf->frame_total_ms.store(decoder_duration_ms(
                         std::chrono::steady_clock::now() -
                         decode_pipeline_start));
+                    decoder_perf->demux_ms.store(last_demux_ms);
+                    decoder_perf->demux_success.store(last_demux_success ? 1 : 0);
+                    decoder_perf->decode_ms.store(last_decode_ms);
+                    decoder_perf->decode_returned.store(last_decode_returned);
+                    decoder_perf->packet_total_ms.store(last_demux_ms +
+                                                       last_decode_ms);
                     decoder_perf->published_frame.store(assigned_frame_num);
+                    (void)decoder_perf->sample_sequence.fetch_add(1);
                     if (seek_debug_frames_to_log > 0) {
                         const int64_t pts_frame =
                             (frame_timestamp >= 0)
@@ -724,13 +774,14 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                                 : -1;
                         if (crimson_seek_debug_logs_enabled()) std::cout << "[SeekDebug] cam=" << cam_name
                                   << " assigned=" << assigned_frame_num
+                                  << " local=" << local_frame_num
                                   << " pts_frame=" << pts_frame
                                   << " fallback_counter=" << nFrame
                                   << " pts=" << frame_timestamp
                                   << " buffer_head=" << buffer_head << std::endl;
                         --seek_debug_frames_to_log;
                     }
-                    nFrame = assigned_frame_num + 1;
+                    nFrame = local_frame_num + 1;
                     buffer_head = (buffer_head + 1) % size_of_buffer;
                     // for debugging purpose
                     if (!demux_success) {
@@ -754,8 +805,8 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                 std::this_thread::sleep_for(std::chrono::milliseconds(2));
             }
         }
-        } while (!(dc_context->stop_flag));
-        cleanup_decoder_resources();
+    } while (!(dc_context->stop_flag));
+    cleanup_decoder_resources();
     } catch (const std::exception& e) {
         cleanup_decoder_resources();
         record_decoder_error_message(cam_name, e.what());
@@ -808,64 +859,58 @@ void image_loader(DecoderContext *dc_context,
                 //     decoder_clear_buffer_with_constant_image(display_buffer[i].frame,
                 //     3208, 2200);
                 // }
-                display_buffer[i].available_to_write = true;
-                display_buffer[i].frame_number = -1;
-                display_buffer[i].color_matrix = ColorSpaceStandard_BT709;
+                frameSlotResetForWrite(display_buffer[i]);
             }
             buffer_head = 0;
             frame_number = static_cast<int>(requested_frame);
-            display_buffer[0].frame_number = -1;
             mark_seek_done(requested_frame);
         } else {
             if (frame_number < img_list_vector.size()) {
-                if (frame_number == 0) {
-                    std::string file_name = root_dir + "/" + cam_name + "_" +
-                                            img_list_vector[frame_number];
-                    cv::Mat image = cv::imread(file_name, cv::IMREAD_COLOR);
-                    cv::Mat image_rgba;
-                    cv::cvtColor(image, image_rgba, cv::COLOR_BGR2RGBA);
-                    size_t buffer_size =
-                        image_rgba.total() *
-                        image_rgba.elemSize(); // Rows * Cols * Channels
-                    memcpy(display_buffer[buffer_head].frame, image_rgba.data,
-                           buffer_size);
-
-                    display_buffer[buffer_head].available_to_write = false;
-                    dc_context->decoding_flag = true;
-                    display_buffer[buffer_head].frame_number = frame_number;
-                    display_buffer[buffer_head].pitch_bytes =
-                        image_rgba.cols * static_cast<int>(image_rgba.elemSize());
-                    display_buffer[buffer_head].frame_bytes = buffer_size;
-                    display_buffer[buffer_head].color_matrix =
-                        ColorSpaceStandard_BT709;
-                    display_buffer[buffer_head].format =
-                        PictureBufferFormat::RGBA32;
-                } else {
-                    while (!display_buffer[buffer_head].available_to_write &&
-                           !(dc_context->stop_flag) && !seek_requested()) {
-                        std::this_thread::sleep_for(
-                            std::chrono::milliseconds(1));
+                std::optional<FrameSlotWriteLease> write_lease;
+                while (!(dc_context->stop_flag) && !seek_requested()) {
+                    write_lease =
+                        frameSlotAcquireWritable(display_buffer[buffer_head]);
+                    if (write_lease.has_value()) {
+                        break;
                     }
-                    std::string file_name = root_dir + "/" + cam_name + "_" +
-                                            img_list_vector[frame_number];
-                    cv::Mat image = cv::imread(file_name, cv::IMREAD_COLOR);
-                    cv::Mat image_rgba;
-                    cv::cvtColor(image, image_rgba, cv::COLOR_BGR2RGBA);
-                    size_t buffer_size =
-                        image_rgba.total() *
-                        image_rgba.elemSize(); // Rows * Cols * Channels
-                    memcpy(display_buffer[buffer_head].frame, image_rgba.data,
-                           buffer_size);
-                    display_buffer[buffer_head].available_to_write = false;
-                    display_buffer[buffer_head].frame_number = frame_number;
-                    display_buffer[buffer_head].pitch_bytes =
-                        image_rgba.cols * static_cast<int>(image_rgba.elemSize());
-                    display_buffer[buffer_head].frame_bytes = buffer_size;
-                    display_buffer[buffer_head].color_matrix =
-                        ColorSpaceStandard_BT709;
-                    display_buffer[buffer_head].format =
-                        PictureBufferFormat::RGBA32;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 }
+                if (!write_lease.has_value()) {
+                    continue;
+                }
+
+                const std::string file_name =
+                    root_dir + "/" + cam_name + "_" +
+                    img_list_vector[frame_number];
+                cv::Mat image = cv::imread(file_name, cv::IMREAD_COLOR);
+                cv::Mat image_rgba;
+                cv::cvtColor(image, image_rgba, cv::COLOR_BGR2RGBA);
+                const size_t buffer_size =
+                    image_rgba.total() * image_rgba.elemSize();
+                std::memcpy(write_lease->frame(), image_rgba.data, buffer_size);
+
+                FrameSlotMetadata metadata;
+                metadata.stream_id = cam_name;
+                metadata.frame_number = frame_number;
+                metadata.local_frame_number = frame_number;
+                metadata.frame_pts = -1;
+                metadata.frame_source_code = 2;
+                metadata.width = image_rgba.cols;
+                metadata.height = image_rgba.rows;
+                metadata.pitch_bytes =
+                    image_rgba.cols * static_cast<int>(image_rgba.elemSize());
+                metadata.frame_bytes = buffer_size;
+                metadata.color_matrix = ColorSpaceStandard_BT709;
+                metadata.color_range = ColorRange_Unspecified;
+                metadata.pixel_format = FramePixelFormat::RGBA8;
+                metadata.surface_backend =
+                    use_cpu_buffer ? FrameSurfaceBackend::Cpu
+                                   : FrameSurfaceBackend::NvidiaCuda;
+                metadata.ownership = FrameSurfaceOwnership::SlotOwned;
+                metadata.lifetime =
+                    FrameSurfaceLifetime::UntilReadLeaseReleased;
+                write_lease->publish(metadata);
+                dc_context->decoding_flag = true;
                 frame_number = frame_number + 1;
                 buffer_head = (buffer_head + 1) % size_of_buffer;
             } else {

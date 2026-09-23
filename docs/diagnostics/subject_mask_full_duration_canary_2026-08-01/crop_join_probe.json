@@ -1,0 +1,19 @@
+{
+  "crop_run": "crop_sleepyfish_cam2010095_full_v8_20260730",
+  "elapsed_ms": 2172.260833,
+  "error": "",
+  "frame_count": 1188000,
+  "instance_key_mismatches": 0,
+  "instance_keys_compared": 1169010,
+  "mask_run": "refined_subject_masks_sleepyfish_subject_mask_full_duration_20260731_73f7bb5e",
+  "non_identity_source_rows": 0,
+  "out_of_range_rows": 0,
+  "placement_mismatches": 0,
+  "placements_compared": 1169010,
+  "row_count": 1169010,
+  "schema_id": "crimson.subject_mask.crop_join_probe",
+  "schema_version": 1,
+  "source_crop_row_ids_read": 1169010,
+  "status": "pass",
+  "store": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/subject_mask_storage/full_duration/sleepyfish_cam2010095_20260731_73f7bb5e/analysis.zarr"
+}

@@ -33,6 +33,7 @@ Current preset stack family:
 - `linux-trt10-cuda12.4-debug`
 - `windows-trt10-cuda12.4`
 - `windows-trt10-cuda12.4-no-sfm`
+- `macos-arm64-release`
 
 Those presets currently mean:
 
@@ -62,6 +63,67 @@ For a first Windows bring-up where 3D triangulation is not needed, prefer
 `windows-trt10-cuda12.4-no-sfm`. That preset disables the OpenCV SFM-based
 triangulation path and leaves the rest of the pinned stack unchanged.
 
+### macOS Native Application
+
+`macos-arm64-release` builds the native Apple Silicon application with
+GLFW/Cocoa, ImGui, ImPlot, Metal, AVFoundation main-camera playback, and the
+TensorStore C++ Zarr drivers. It excludes the NVIDIA CUDA, NVDEC, TensorRT,
+GLEW, and OpenGL backends. Crop/stimulus playback, analysis overlays, editing,
+and inference remain later porting phases.
+
+Prerequisites and build:
+
+```bash
+brew install cmake ninja glfw nasm
+git submodule update --init --recursive
+cmake --preset macos-arm64-release
+cmake --build --preset build-macos-arm64-release
+ctest --preset test-macos-arm64-headless
+ctest --preset test-macos-arm64
+```
+
+CMake fetches and builds the pinned TensorStore C++ source for macOS. Python
+Zarr is not used. NASM is a build-time prerequisite of TensorStore's codec
+dependencies and is not required by the installed Crimson application itself.
+
+The app bundle is written to
+`build/macos-arm64-release/Crimson.app`. Keeping it inside the preset build
+directory prevents another configuration from replacing the executable used by
+CTest. The CTest suite contains a headless offscreen Metal/ImGui pixel test and
+a finite real-window GLFW/Cocoa presentation smoke. See
+[`docs/archive/macos-port/phase0/crimson_macos_phase0_inventory.md`](docs/archive/macos-port/phase0/crimson_macos_phase0_inventory.md)
+for the historical pre-port baseline, measured results, and NVIDIA validation
+commands. It is retained as evidence rather than an active parity plan.
+
+The backend-neutral frame metadata, surface lifetime, presentation handles, and
+portable selection tests introduced in Phase 2 are documented in
+[`docs/crimson_macos_phase2_frame_contracts.md`](docs/crimson_macos_phase2_frame_contracts.md).
+
+The Phase 4 stimulus repository contract, corrected/legacy mapping precedence,
+and fixture-backed TensorStore test are documented in
+[`docs/crimson_macos_phase4b_stimulus_repository.md`](docs/crimson_macos_phase4b_stimulus_repository.md).
+Its production-Zarr parity checkpoint, including cross-mount stimulus video
+path resolution, is documented in
+[`docs/crimson_macos_phase4c_production_zarr_parity.md`](docs/crimson_macos_phase4c_production_zarr_parity.md).
+The Phase 4D camera-driven stimulus decode policy, headless identity tests, and
+production re-encode gate are documented in
+[`docs/crimson_macos_phase4d_aligned_stimulus_decode.md`](docs/crimson_macos_phase4d_aligned_stimulus_decode.md).
+The Phase 4E atomic camera/stimulus Metal presentation contract and production
+smoke results are documented in
+[`docs/crimson_macos_phase4e_composite_stimulus_presentation.md`](docs/crimson_macos_phase4e_composite_stimulus_presentation.md).
+The Phase 4F-A production acquisition-crop contract and implementation audit are
+documented in
+[`docs/crimson_macos_phase4f_acquisition_crop_audit.md`](docs/crimson_macos_phase4f_acquisition_crop_audit.md).
+The Phase 4F-B portable source-capability, exact-frame, and geometry contract is
+documented in
+[`docs/crimson_macos_phase4f_crop_source_contract.md`](docs/crimson_macos_phase4f_crop_source_contract.md).
+The Phase 4F-C acquisition crop repository, Zarr v2/v3 adapter, strict sidecar
+validation, and production archive probes are documented in
+[`docs/crimson_macos_phase4f_acquisition_crop_repository.md`](docs/crimson_macos_phase4f_acquisition_crop_repository.md).
+The Phase 4F-D bounded Apple acquisition-crop decode session, exact identity
+tests, and production VideoToolbox probes are documented in
+[`docs/crimson_macos_phase4f_apple_acquisition_crop_playback.md`](docs/crimson_macos_phase4f_apple_acquisition_crop_playback.md).
+
 ### How Dependency Paths Are Supplied
 
 Shared presets in the repo define the supported stack.
@@ -88,6 +150,9 @@ Notes:
 - `CRIMSON_VIDEO_CODEC_SDK_ROOT` should point to the NVIDIA Video Codec SDK
   root, typically the folder containing `Interface/` and either `Lib/x64/`
   or `Lib/win/x64/`
+- normal GUI playback requires NVDEC/CUVID (`nvcuvid`) but not NVENC
+  (`nvencodeapi`). Set `-DCRIMSON_ENABLE_NVENC=ON` only for future
+  encode/export targets that actually use NVIDIA's encode API.
 
 Linux example:
 
@@ -130,6 +195,20 @@ For repeat use on the validated Windows stack, prefer the helper script:
 
 ```powershell
 . .\tools\set_windows_dependency_roots.ps1
+```
+
+If PowerShell reports that running scripts is disabled, allow scripts for only
+the current shell and rerun the helper:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+. .\tools\set_windows_dependency_roots.ps1
+```
+
+For a persistent per-user setting, use:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 ```
 
 It sets the `CRIMSON_*` dependency roots and prepends the common runtime DLL
@@ -210,8 +289,8 @@ cd build
 cmake -D CMAKE_BUILD_TYPE=RELEASE \
 -D CMAKE_INSTALL_PREFIX=/usr/local \
 -D WITH_TBB=ON \
--D ENABLE_FAST_MATH=1 \
--D CUDA_FAST_MATH=1 \
+-D ENABLE_FAST_MATH=OFF \
+-D CUDA_FAST_MATH=OFF \
 -D WITH_CUBLAS=1 \
 -D WITH_CUDA=ON \
 -D BUILD_opencv_cudacodec=OFF \

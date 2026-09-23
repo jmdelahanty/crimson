@@ -141,7 +141,9 @@ bool ZarrDetectionLoader::applyDetectionDataset(const InterpolationRunData& stag
     data_.detection_reason_flags = stage.detection_reason;
     data_.has_scores = stage.has_scores;
     data_.has_class_ids = stage.has_class_ids;
-    data_.coordinates_normalized = stage.uses_palette_layout;
+    data_.boxes_are_pixel_xyxy = stage.boxes_are_pixel_xyxy;
+    data_.coordinates_normalized =
+        stage.uses_palette_layout && !stage.boxes_are_pixel_xyxy;
     data_.layout = ZarrLayoutType::kPaletteRuns;
 
     data_.n_detections = stage.n_detections;
@@ -236,25 +238,25 @@ ZarrDetectionLoader::getAvailableDetectionDatasets() const {
         return fallback;
     };
 
+    if (data_.has_refined_root_dataset) {
+        std::string label = make_label(data_.refined_root_dataset, "Refined");
+        result.emplace_back(DetectionDataset::RefinedRoot, std::move(label));
+    }
     if (data_.has_raw_detection_dataset) {
         std::string label = make_label(data_.raw_detection_dataset, "Detect run");
         result.emplace_back(DetectionDataset::RawDetect, std::move(label));
-    }
-    if (data_.has_refined_manual_dataset) {
-        std::string label = make_label(data_.refined_manual_dataset, "Refined manual");
-        result.emplace_back(DetectionDataset::RefinedManual, std::move(label));
-    }
-    if (data_.has_refined_filtered_dataset) {
-        std::string label = make_label(data_.refined_filtered_dataset, "Refined filtered");
-        result.emplace_back(DetectionDataset::RefinedFiltered, std::move(label));
     }
     if (data_.has_refined_interpolated_dataset) {
         std::string label = make_label(data_.refined_interpolated_dataset, "Refined interpolated");
         result.emplace_back(DetectionDataset::RefinedInterpolated, std::move(label));
     }
-    if (data_.has_refined_root_dataset) {
-        std::string label = make_label(data_.refined_root_dataset, "Refined (root)");
-        result.emplace_back(DetectionDataset::RefinedRoot, std::move(label));
+    if (data_.has_refined_filtered_dataset) {
+        std::string label = make_label(data_.refined_filtered_dataset, "Refined filtered");
+        result.emplace_back(DetectionDataset::RefinedFiltered, std::move(label));
+    }
+    if (data_.has_refined_manual_dataset) {
+        std::string label = make_label(data_.refined_manual_dataset, "Legacy refined manual");
+        result.emplace_back(DetectionDataset::RefinedManual, std::move(label));
     }
     return result;
 }
@@ -586,7 +588,8 @@ bool ZarrDetectionLoader::loadMetadata(const ts::kvstore::KvStore& store) {
                 double frames = 0.0;
                 if (assignIfNumber(*root_attrs, "total_frames", frames) ||
                     assignIfNumber(*root_attrs, "n_frames", frames) ||
-                    assignIfNumber(*root_attrs, "source_video_total_frames", frames)) {
+                    assignIfNumber(*root_attrs, "source_video_total_frames", frames) ||
+                    assignIfNumber(*root_attrs, "recording_frame_index_row_count", frames)) {
                     if (frames > 0.0) {
                         data_.total_frames = static_cast<size_t>(frames);
                         metadata_found = true;
@@ -1183,7 +1186,12 @@ std::vector<LoggedBoundingBox> ZarrDetectionLoader::getBoundingBoxesForFrame(
 }
 
 ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
-    size_t frame_id, bool use_interpolated, bool include_eye_masks) const {
+    size_t frame_id,
+    bool use_interpolated,
+    bool include_eye_masks,
+    bool include_subject_shapes,
+    bool suppress_subject_mask_smoke_log,
+    bool allow_blocking_eye_mask_load) const {
     
     FrameDetections result;
     result.frame_id = frame_id;
@@ -1215,6 +1223,9 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
         const auto& class_source = want_interpolated
             ? data_.latest_interpolation.flat_class_ids
             : data_.flat_class_ids;
+        const bool boxes_are_pixel_xyxy = want_interpolated
+            ? data_.latest_interpolation.boxes_are_pixel_xyxy
+            : data_.boxes_are_pixel_xyxy;
 
         const bool has_scores = want_interpolated
             ? !data_.latest_interpolation.flat_scores.empty()
@@ -1229,6 +1240,13 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
         const bool can_use_eye_masks =
             include_eye_masks && !want_interpolated &&
             ((data_.has_eye_masks && data_.eye_masks_loaded) || has_roi_metadata);
+        const bool use_refined_subject_mask_frame_lookup =
+            can_use_eye_masks &&
+            data_.eye_masks_from_refined_subject_masks &&
+            !data_.refined_subject_mask_rows_by_frame.empty();
+        const bool can_use_subject_shapes =
+            include_subject_shapes && !want_interpolated &&
+            data_.subject_shape.loaded && has_roi_metadata;
         const bool can_use_keypoints =
             data_.has_keypoints && !want_interpolated &&
             data_.keypoints_per_detection > 0 &&
@@ -1247,8 +1265,18 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
             result.heading_valid.reserve(end - start);
         }
         if (can_use_eye_masks) {
-            result.eye_masks.reserve(end - start);
+            if (use_refined_subject_mask_frame_lookup &&
+                frame_id < data_.refined_subject_mask_rows_by_frame.size()) {
+                result.eye_masks.reserve(
+                    data_.refined_subject_mask_rows_by_frame[frame_id].size());
+            } else {
+                result.eye_masks.reserve(end - start);
+            }
             result.includes_eye_masks = true;
+        }
+        if (can_use_subject_shapes) {
+            result.subject_shapes.reserve(end - start);
+            result.includes_subject_shapes = true;
         }
         if (can_use_keypoints) {
             result.keypoints_pixels.reserve(end - start);
@@ -1274,11 +1302,17 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
         }
 
         for (size_t idx = start; idx < end && idx < boxes_source.size(); ++idx) {
-            auto pixel_box = normalizedBoxToPixels(
-                boxes_source[idx],
-                data_.image_width,
-                data_.image_height
-            );
+            auto pixel_box = boxes_are_pixel_xyxy
+                ? boxes_source[idx]
+                : normalizedBoxToPixels(
+                      boxes_source[idx],
+                      data_.image_width,
+                      data_.image_height
+                  );
+            if (!std::isfinite(pixel_box[0]) || !std::isfinite(pixel_box[1]) ||
+                !std::isfinite(pixel_box[2]) || !std::isfinite(pixel_box[3])) {
+                continue;
+            }
             result.boxes.push_back(pixel_box);
 
             if (has_scores && idx < scores_source.size()) {
@@ -1374,7 +1408,7 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
                 result.heading_valid.push_back(valid);
             }
 
-            if (can_use_eye_masks) {
+            if (can_use_eye_masks && !use_refined_subject_mask_frame_lookup) {
                 FrameDetections::EyeMask mask_entry;
                 mask_entry.offset_x =
                     (idx < data_.roi_offset_x.size()) ? data_.roi_offset_x[idx] : nan_value;
@@ -1397,28 +1431,295 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
                     roi_lookup >= 0 &&
                     static_cast<size_t>(roi_lookup) < data_.eye_mask_roi_count &&
                     offsets_valid && dims_valid) {
-                    populateEyeMaskEntry(static_cast<size_t>(roi_lookup), mask_entry);
+                    populateEyeMaskEntry(
+                        static_cast<size_t>(roi_lookup),
+                        mask_entry,
+                        allow_blocking_eye_mask_load,
+                        !allow_blocking_eye_mask_load);
                 }
                 if (data_.has_eye_angles && roi_lookup >= 0) {
                     size_t roi_idx = static_cast<size_t>(roi_lookup);
                     bool roi_valid = data_.eye_angle_valid_mask.empty() ||
                                      (roi_idx < data_.eye_angle_valid_mask.size() &&
                                       data_.eye_angle_valid_mask[roi_idx] != 0);
+                    bool left_valid = roi_valid;
+                    bool right_valid = roi_valid;
+                    if (data_.eye_angle_analysis.loaded) {
+                        const auto& eye = data_.eye_angle_analysis;
+                        if (!eye.roi_valid_left.empty()) {
+                            left_valid =
+                                roi_idx < eye.roi_valid_left.size() &&
+                                eye.roi_valid_left[roi_idx] != 0;
+                        }
+                        if (!eye.roi_valid_right.empty()) {
+                            right_valid =
+                                roi_idx < eye.roi_valid_right.size() &&
+                                eye.roi_valid_right[roi_idx] != 0;
+                        }
+                        if (!eye.roi_valid_frame.empty()) {
+                            const bool frame_valid =
+                                roi_idx < eye.roi_valid_frame.size() &&
+                                eye.roi_valid_frame[roi_idx] != 0;
+                            left_valid = left_valid && frame_valid;
+                            right_valid = right_valid && frame_valid;
+                        }
+                    }
+                    if (data_.has_eye_frame_angles) {
+                        if (roi_idx < data_.eye_frame_left_angle_deg.size()) {
+                            float left_eye_frame_angle =
+                                data_.eye_frame_left_angle_deg[roi_idx];
+                            mask_entry.eye_frame_angle_deg[0] =
+                                left_eye_frame_angle;
+                            mask_entry.eye_frame_angle_valid[0] =
+                                (left_valid &&
+                                 std::isfinite(left_eye_frame_angle))
+                                    ? 1
+                                    : 0;
+                        }
+                        if (roi_idx < data_.eye_frame_right_angle_deg.size()) {
+                            float right_eye_frame_angle =
+                                data_.eye_frame_right_angle_deg[roi_idx];
+                            mask_entry.eye_frame_angle_deg[1] =
+                                right_eye_frame_angle;
+                            mask_entry.eye_frame_angle_valid[1] =
+                                (right_valid &&
+                                 std::isfinite(right_eye_frame_angle))
+                                    ? 1
+                                    : 0;
+                        }
+                        if (roi_idx < data_.eye_frame_vergence_deg.size()) {
+                            float eye_frame_vergence =
+                                data_.eye_frame_vergence_deg[roi_idx];
+                            mask_entry.eye_frame_vergence_deg =
+                                eye_frame_vergence;
+                            mask_entry.eye_frame_vergence_valid =
+                                (left_valid && right_valid &&
+                                 std::isfinite(eye_frame_vergence))
+                                    ? 1
+                                    : 0;
+                        }
+                        mask_entry.has_eye_frame_angles =
+                            mask_entry.eye_frame_angle_valid[0] != 0 ||
+                            mask_entry.eye_frame_angle_valid[1] != 0 ||
+                            mask_entry.eye_frame_vergence_valid != 0;
+                    }
                     if (roi_idx < data_.eye_angle_left_deg.size()) {
                         float left_angle = data_.eye_angle_left_deg[roi_idx];
                         mask_entry.feret_minor_angle_deg[0] = left_angle;
                         mask_entry.feret_angle_valid[0] =
-                            (roi_valid && std::isfinite(left_angle)) ? 1 : 0;
+                            (left_valid && std::isfinite(left_angle)) ? 1 : 0;
                     }
                     if (roi_idx < data_.eye_angle_right_deg.size()) {
                         float right_angle = data_.eye_angle_right_deg[roi_idx];
                         mask_entry.feret_minor_angle_deg[1] = right_angle;
                         mask_entry.feret_angle_valid[1] =
-                            (roi_valid && std::isfinite(right_angle)) ? 1 : 0;
+                            (right_valid && std::isfinite(right_angle)) ? 1 : 0;
                     }
                     mask_entry.has_eye_angles =
                         (mask_entry.feret_angle_valid[0] != 0) ||
                         (mask_entry.feret_angle_valid[1] != 0);
+                }
+                if (data_.eye_angle_analysis.loaded && roi_lookup >= 0) {
+                    const size_t roi_idx = static_cast<size_t>(roi_lookup);
+                    const auto& vector_fields =
+                        data_.eye_angle_analysis.vector_fields;
+                    auto copy_gaze_vector =
+                        [&](const std::string& field_name, size_t eye_index) {
+                        auto it = std::find_if(
+                            vector_fields.begin(),
+                            vector_fields.end(),
+                            [&](const auto& field) {
+                                return field.name == field_name &&
+                                       field.has_roi;
+                            });
+                        if (it == vector_fields.end() ||
+                            roi_idx >= it->roi_values.size()) {
+                            return;
+                        }
+                        const auto value = it->roi_values[roi_idx];
+                        if (!std::isfinite(value[0]) ||
+                            !std::isfinite(value[1])) {
+                            return;
+                        }
+                        mask_entry.gaze_vector_xy[eye_index] = value;
+                        mask_entry.gaze_vector_valid[eye_index] = 1;
+                    };
+                    copy_gaze_vector("left_gaze_xy", 0);
+                    copy_gaze_vector("right_gaze_xy", 1);
+                    mask_entry.has_gaze_vectors =
+                        mask_entry.gaze_vector_valid[0] != 0 ||
+                        mask_entry.gaze_vector_valid[1] != 0;
+                }
+
+                result.eye_masks.push_back(std::move(mask_entry));
+            }
+
+            if (can_use_subject_shapes) {
+                FrameDetections::SubjectShape shape_entry;
+                shape_entry.offset_x =
+                    (idx < data_.roi_offset_x.size()) ? data_.roi_offset_x[idx] : nan_value;
+                shape_entry.offset_y =
+                    (idx < data_.roi_offset_y.size()) ? data_.roi_offset_y[idx] : nan_value;
+                shape_entry.roi_width =
+                    (idx < data_.roi_width_px.size()) ? data_.roi_width_px[idx] : 0.0f;
+                shape_entry.roi_height =
+                    (idx < data_.roi_height_px.size()) ? data_.roi_height_px[idx] : 0.0f;
+                shape_entry.coordinate_width =
+                    data_.eye_mask_width > 0
+                        ? static_cast<float>(data_.eye_mask_width)
+                        : (data_.crop_data.width > 0
+                               ? static_cast<float>(data_.crop_data.width)
+                               : shape_entry.roi_width);
+                shape_entry.coordinate_height =
+                    data_.eye_mask_height > 0
+                        ? static_cast<float>(data_.eye_mask_height)
+                        : (data_.crop_data.height > 0
+                               ? static_cast<float>(data_.crop_data.height)
+                               : shape_entry.roi_height);
+
+                const int32_t roi_lookup =
+                    (idx < data_.mask_roi_indices.size()) ? data_.mask_roi_indices[idx] : -1;
+                if (roi_lookup >= 0 &&
+                    std::isfinite(shape_entry.offset_x) &&
+                    std::isfinite(shape_entry.offset_y) &&
+                    shape_entry.roi_width > 0.0f &&
+                    shape_entry.roi_height > 0.0f &&
+                    shape_entry.coordinate_width > 0.0f &&
+                    shape_entry.coordinate_height > 0.0f) {
+                    populateSubjectShapeEntry(static_cast<size_t>(roi_lookup),
+                                              shape_entry);
+                } else {
+                    shape_entry.roi_index = roi_lookup;
+                }
+                result.subject_shapes.push_back(std::move(shape_entry));
+            }
+        }
+
+        if (use_refined_subject_mask_frame_lookup &&
+            frame_id < data_.refined_subject_mask_rows_by_frame.size()) {
+            const auto& mask_rows =
+                data_.refined_subject_mask_rows_by_frame[frame_id];
+            const bool should_smoke_log =
+                !suppress_subject_mask_smoke_log &&
+                !mask_rows.empty() &&
+                data_.refined_subject_mask_smoke_logged_frames.size() < 4 &&
+                data_.refined_subject_mask_smoke_logged_frames
+                    .insert(static_cast<int32_t>(frame_id))
+                    .second;
+
+            auto labelsSummary = [&]() -> std::string {
+                std::ostringstream oss;
+                for (size_t label_idx = 0;
+                     label_idx < data_.refined_subject_mask_labels.size();
+                     ++label_idx) {
+                    if (label_idx > 0) {
+                        oss << ",";
+                    }
+                    oss << data_.refined_subject_mask_labels[label_idx];
+                }
+                return oss.str();
+            };
+            auto availableSummary = [&]() -> std::string {
+                std::ostringstream oss;
+                for (size_t channel_idx = 0;
+                     channel_idx <
+                     data_.refined_subject_mask_available_channels.size();
+                     ++channel_idx) {
+                    if (channel_idx > 0) {
+                        oss << ",";
+                    }
+                    oss << (data_.refined_subject_mask_available_channels[channel_idx]
+                                ? "1"
+                                : "0");
+                }
+                return oss.str();
+            };
+
+            const std::string labels_summary =
+                should_smoke_log ? labelsSummary() : std::string();
+            const std::string available_summary =
+                should_smoke_log ? availableSummary() : std::string();
+            size_t smoke_logged_rows = 0;
+            for (size_t row_idx = 0; row_idx < mask_rows.size(); ++row_idx) {
+                const size_t mask_row = mask_rows[row_idx];
+                if (mask_row >= data_.eye_mask_roi_count ||
+                    mask_row >= data_.refined_subject_mask_offset_x.size() ||
+                    mask_row >= data_.refined_subject_mask_offset_y.size() ||
+                    mask_row >=
+                        data_.refined_subject_mask_roi_width_px.size() ||
+                    mask_row >=
+                        data_.refined_subject_mask_roi_height_px.size() ||
+                    mask_row >=
+                        data_.refined_subject_mask_crop_frame_match.size() ||
+                    data_.refined_subject_mask_crop_frame_match[mask_row] == 0) {
+                    continue;
+                }
+
+                FrameDetections::EyeMask mask_entry;
+                mask_entry.offset_x =
+                    data_.refined_subject_mask_offset_x[mask_row];
+                mask_entry.offset_y =
+                    data_.refined_subject_mask_offset_y[mask_row];
+                mask_entry.roi_width =
+                    data_.refined_subject_mask_roi_width_px[mask_row];
+                mask_entry.roi_height =
+                    data_.refined_subject_mask_roi_height_px[mask_row];
+                mask_entry.rows = static_cast<int>(data_.eye_mask_height);
+                mask_entry.cols = static_cast<int>(data_.eye_mask_width);
+                mask_entry.roi_index = static_cast<int32_t>(mask_row);
+
+                const bool offsets_valid =
+                    std::isfinite(mask_entry.offset_x) &&
+                    std::isfinite(mask_entry.offset_y);
+                const bool dims_valid =
+                    mask_entry.roi_width > 0.0f &&
+                    mask_entry.roi_height > 0.0f;
+                if (offsets_valid && dims_valid) {
+                    populateEyeMaskEntry(mask_row,
+                                         mask_entry,
+                                         allow_blocking_eye_mask_load,
+                                         !allow_blocking_eye_mask_load);
+                }
+
+                if (should_smoke_log && smoke_logged_rows < 3) {
+                    const int64_t crop_row =
+                        mask_row < data_.refined_subject_mask_source_crop_row_ids.size()
+                            ? data_.refined_subject_mask_source_crop_row_ids[mask_row]
+                            : -1;
+                    const int32_t crop_frame =
+                        mask_row <
+                                data_.refined_subject_mask_source_crop_frame_indices.size()
+                            ? data_.refined_subject_mask_source_crop_frame_indices[mask_row]
+                            : -1;
+                    const bool crop_frame_matched =
+                        mask_row < data_.refined_subject_mask_crop_frame_match.size() &&
+                        data_.refined_subject_mask_crop_frame_match[mask_row] != 0;
+                    std::cout
+                        << "[SUBJECT_MASK_SMOKE] displayed_frame="
+                        << frame_id
+                        << " mask_row=" << mask_row
+                        << " source_crop_row_id=" << crop_row
+                        << " crop_frame=" << crop_frame
+                        << " roi_top_left=(" << mask_entry.offset_x << ","
+                        << mask_entry.offset_y << ")"
+                        << " mask_labels=[" << labels_summary << "]"
+                        << " available_channels=[" << available_summary << "]"
+                        << " path="
+                        << (data_.refined_subject_mask_dense_masks_used
+                                ? "dense_masks_roi"
+                                : (data_.refined_subject_mask_bitpacked_masks_used
+                                       ? "mask_bitpacked"
+                                       : (data_.refined_subject_mask_rle_masks_used
+                                              ? "mask_rle"
+                                              : "fallback")))
+                        << " row_position_fallback="
+                        << (data_.refined_subject_mask_row_position_fallback
+                                ? "yes"
+                                : "no")
+                        << " crop_frame_match="
+                        << (crop_frame_matched ? "yes" : "no")
+                        << std::endl;
+                    ++smoke_logged_rows;
                 }
 
                 result.eye_masks.push_back(std::move(mask_entry));
@@ -1557,6 +1858,351 @@ std::vector<LoggedBoundingBox> ZarrDetectionLoader::convertDetectionsToLoggedBox
     }
     
     return result;
+}
+
+ZarrDetectionLoader::KeypointRoiMetadata
+ZarrDetectionLoader::getCropRoiMetadataForRoiIndex(int32_t roi_index) const {
+    KeypointRoiMetadata metadata;
+    metadata.roi_index = roi_index;
+    if (roi_index < 0) {
+        return metadata;
+    }
+
+    if (data_.eye_masks_from_refined_subject_masks &&
+        static_cast<size_t>(roi_index) <
+            data_.refined_subject_mask_offset_x.size()) {
+        const size_t mask_row = static_cast<size_t>(roi_index);
+        metadata.valid = true;
+        metadata.offset_x = data_.refined_subject_mask_offset_x[mask_row];
+        metadata.offset_y = data_.refined_subject_mask_offset_y[mask_row];
+        if (mask_row < data_.refined_subject_mask_roi_width_px.size()) {
+            metadata.roi_width =
+                data_.refined_subject_mask_roi_width_px[mask_row];
+        }
+        if (mask_row < data_.refined_subject_mask_roi_height_px.size()) {
+            metadata.roi_height =
+                data_.refined_subject_mask_roi_height_px[mask_row];
+        }
+        metadata.has_crop_metadata =
+            std::isfinite(metadata.offset_x) &&
+            std::isfinite(metadata.offset_y) &&
+            metadata.roi_width > 0.0f &&
+            metadata.roi_height > 0.0f;
+        if (metadata.has_crop_metadata) {
+            return metadata;
+        }
+    }
+
+    auto fill_from_detection_row = [&](size_t det_row) {
+        metadata.valid = true;
+        if (det_row < data_.roi_offset_x.size()) {
+            metadata.offset_x = data_.roi_offset_x[det_row];
+        }
+        if (det_row < data_.roi_offset_y.size()) {
+            metadata.offset_y = data_.roi_offset_y[det_row];
+        }
+        if (det_row < data_.roi_width_px.size()) {
+            metadata.roi_width = data_.roi_width_px[det_row];
+        }
+        if (det_row < data_.roi_height_px.size()) {
+            metadata.roi_height = data_.roi_height_px[det_row];
+        }
+        metadata.has_crop_metadata =
+            std::isfinite(metadata.offset_x) &&
+            std::isfinite(metadata.offset_y) &&
+            metadata.roi_width > 0.0f &&
+            metadata.roi_height > 0.0f;
+    };
+
+    for (size_t det_row = 0; det_row < data_.keypoint_roi_indices.size(); ++det_row) {
+        if (data_.keypoint_roi_indices[det_row] == roi_index) {
+            fill_from_detection_row(det_row);
+            return metadata;
+        }
+    }
+    for (size_t det_row = 0; det_row < data_.mask_roi_indices.size(); ++det_row) {
+        if (data_.mask_roi_indices[det_row] == roi_index) {
+            fill_from_detection_row(det_row);
+            return metadata;
+        }
+    }
+    return metadata;
+}
+
+ZarrDetectionLoader::KeypointRoiMetadata
+ZarrDetectionLoader::getKeypointRoiMetadataForFrameDetection(
+    size_t frame_id,
+    size_t detection_idx,
+    bool use_interpolated) const {
+    KeypointRoiMetadata metadata;
+
+    // Refined/raw keypoint rows are aligned to the non-interpolated detection order.
+    // Synthetic interpolated rows do not have a stable keypoint ROI identity.
+    if (use_interpolated) {
+        return metadata;
+    }
+    if (!data_.has_keypoints || data_.keypoint_roi_indices.empty()) {
+        return metadata;
+    }
+    if (frame_id >= data_.total_frames) {
+        return metadata;
+    }
+    if (data_.frame_offsets.empty() || frame_id + 1 >= data_.frame_offsets.size()) {
+        return metadata;
+    }
+
+    size_t start = data_.frame_offsets[frame_id];
+    size_t end = data_.frame_offsets[frame_id + 1];
+    size_t frame_detection_count = (end >= start) ? (end - start) : 0;
+    if (detection_idx >= frame_detection_count) {
+        return metadata;
+    }
+
+    size_t det_row = start + detection_idx;
+    if (det_row >= data_.keypoint_roi_indices.size()) {
+        return metadata;
+    }
+    metadata.roi_index = data_.keypoint_roi_indices[det_row];
+    metadata.valid = metadata.roi_index >= 0;
+    if (!metadata.valid) {
+        return metadata;
+    }
+
+    if (det_row < data_.roi_offset_x.size()) {
+        metadata.offset_x = data_.roi_offset_x[det_row];
+    }
+    if (det_row < data_.roi_offset_y.size()) {
+        metadata.offset_y = data_.roi_offset_y[det_row];
+    }
+    if (det_row < data_.roi_width_px.size()) {
+        metadata.roi_width = data_.roi_width_px[det_row];
+    }
+    if (det_row < data_.roi_height_px.size()) {
+        metadata.roi_height = data_.roi_height_px[det_row];
+    }
+
+    metadata.has_crop_metadata =
+        std::isfinite(metadata.offset_x) &&
+        std::isfinite(metadata.offset_y) &&
+        metadata.roi_width > 0.0f &&
+        metadata.roi_height > 0.0f;
+    return metadata;
+}
+
+ZarrDetectionLoader::KeypointRoiMetadata
+ZarrDetectionLoader::getMaskRoiMetadataForFrameDetection(
+    size_t frame_id,
+    size_t detection_idx,
+    bool use_interpolated) const {
+    KeypointRoiMetadata metadata;
+
+    // Modern refined subject masks use frame_indices/source_crop_row_ids.
+    // Legacy mask ROI rows are aligned to the non-interpolated detection order.
+    if (use_interpolated) {
+        return metadata;
+    }
+    if (data_.eye_masks_from_refined_subject_masks &&
+        frame_id < data_.refined_subject_mask_rows_by_frame.size()) {
+        const auto& mask_rows =
+            data_.refined_subject_mask_rows_by_frame[frame_id];
+        if (detection_idx < mask_rows.size()) {
+            const size_t mask_row = mask_rows[detection_idx];
+            metadata.roi_index = static_cast<int32_t>(mask_row);
+            metadata.valid = true;
+            if (mask_row < data_.refined_subject_mask_offset_x.size()) {
+                metadata.offset_x =
+                    data_.refined_subject_mask_offset_x[mask_row];
+            }
+            if (mask_row < data_.refined_subject_mask_offset_y.size()) {
+                metadata.offset_y =
+                    data_.refined_subject_mask_offset_y[mask_row];
+            }
+            if (mask_row < data_.refined_subject_mask_roi_width_px.size()) {
+                metadata.roi_width =
+                    data_.refined_subject_mask_roi_width_px[mask_row];
+            }
+            if (mask_row < data_.refined_subject_mask_roi_height_px.size()) {
+                metadata.roi_height =
+                    data_.refined_subject_mask_roi_height_px[mask_row];
+            }
+            metadata.has_crop_metadata =
+                std::isfinite(metadata.offset_x) &&
+                std::isfinite(metadata.offset_y) &&
+                metadata.roi_width > 0.0f &&
+                metadata.roi_height > 0.0f;
+            return metadata;
+        }
+    }
+    if (data_.mask_roi_indices.empty()) {
+        return metadata;
+    }
+    if (frame_id >= data_.total_frames) {
+        return metadata;
+    }
+    if (data_.frame_offsets.empty() || frame_id + 1 >= data_.frame_offsets.size()) {
+        return metadata;
+    }
+
+    size_t start = data_.frame_offsets[frame_id];
+    size_t end = data_.frame_offsets[frame_id + 1];
+    size_t frame_detection_count = (end >= start) ? (end - start) : 0;
+    if (detection_idx >= frame_detection_count) {
+        return metadata;
+    }
+
+    size_t det_row = start + detection_idx;
+    if (det_row >= data_.mask_roi_indices.size()) {
+        return metadata;
+    }
+    metadata.roi_index = data_.mask_roi_indices[det_row];
+    metadata.valid = metadata.roi_index >= 0;
+    if (!metadata.valid) {
+        return metadata;
+    }
+
+    if (det_row < data_.roi_offset_x.size()) {
+        metadata.offset_x = data_.roi_offset_x[det_row];
+    }
+    if (det_row < data_.roi_offset_y.size()) {
+        metadata.offset_y = data_.roi_offset_y[det_row];
+    }
+    if (det_row < data_.roi_width_px.size()) {
+        metadata.roi_width = data_.roi_width_px[det_row];
+    }
+    if (det_row < data_.roi_height_px.size()) {
+        metadata.roi_height = data_.roi_height_px[det_row];
+    }
+
+    metadata.has_crop_metadata =
+        std::isfinite(metadata.offset_x) &&
+        std::isfinite(metadata.offset_y) &&
+        metadata.roi_width > 0.0f &&
+        metadata.roi_height > 0.0f;
+    return metadata;
+}
+
+int32_t ZarrDetectionLoader::getKeypointRoiIndexForFrameDetection(
+    size_t frame_id,
+    size_t detection_idx,
+    bool use_interpolated) const {
+    return getKeypointRoiMetadataForFrameDetection(
+               frame_id, detection_idx, use_interpolated)
+        .roi_index;
+}
+
+bool ZarrDetectionLoader::applyRefinedKeypointCacheUpdate(
+    const RefinedKeypointCacheUpdate& update,
+    std::string* error_message) {
+    auto fail = [&](const std::string& message) {
+        if (error_message != nullptr) {
+            *error_message = message;
+        }
+        return false;
+    };
+    if (error_message != nullptr) {
+        error_message->clear();
+    }
+    if (!update.valid) {
+        return fail("Keypoint cache update is empty.");
+    }
+    if (!data_.has_keypoints || !data_.is_refined_keypoints) {
+        return fail("Loaded keypoint cache is not an editable refined run.");
+    }
+    if (update.frame_id >= data_.total_frames ||
+        data_.frame_offsets.empty() ||
+        update.frame_id + 1 >= data_.frame_offsets.size()) {
+        return fail("Edited keypoint frame is outside the loaded cache.");
+    }
+
+    const size_t start = data_.frame_offsets[update.frame_id];
+    const size_t end = data_.frame_offsets[update.frame_id + 1];
+    const size_t frame_detection_count = end >= start ? end - start : 0;
+    if (update.detection_index >= frame_detection_count) {
+        return fail("Edited keypoint detection is outside the loaded frame.");
+    }
+    size_t det_row = start + update.detection_index;
+    if (det_row >= data_.keypoint_roi_indices.size() ||
+        data_.keypoint_roi_indices[det_row] != update.roi_index) {
+        det_row = std::numeric_limits<size_t>::max();
+        for (size_t i = 0; i < data_.keypoint_roi_indices.size(); ++i) {
+            if (data_.keypoint_roi_indices[i] == update.roi_index) {
+                det_row = i;
+                break;
+            }
+        }
+        if (det_row == std::numeric_limits<size_t>::max()) {
+            return fail("Edited keypoint ROI is not present in the loaded cache.");
+        }
+    }
+
+    if (update.keypoints_img.size() != data_.keypoints_per_detection) {
+        return fail("Edited keypoint count does not match the loaded cache.");
+    }
+
+    const size_t total_detections = data_.keypoint_roi_indices.size();
+    const float nan_value = std::numeric_limits<float>::quiet_NaN();
+    auto ensure_float = [&](std::vector<float>& values, float fallback) {
+        if (values.size() < total_detections) {
+            values.resize(total_detections, fallback);
+        }
+    };
+    auto ensure_u8 = [&](std::vector<uint8_t>& values, uint8_t fallback) {
+        if (values.size() < total_detections) {
+            values.resize(total_detections, fallback);
+        }
+    };
+    auto ensure_i32 = [&](std::vector<int32_t>& values, int32_t fallback) {
+        if (values.size() < total_detections) {
+            values.resize(total_detections, fallback);
+        }
+    };
+    auto ensure_string = [&](std::vector<std::string>& values) {
+        if (values.size() < total_detections) {
+            values.resize(total_detections);
+        }
+    };
+    auto ensure_point = [&](
+        std::vector<std::array<float, 2>>& values,
+        std::array<float, 2> fallback) {
+        if (values.size() < total_detections) {
+            values.resize(total_detections, fallback);
+        }
+    };
+
+    const size_t stride = data_.keypoints_per_detection * 2;
+    const size_t flat_base = det_row * stride;
+    if (flat_base + stride > data_.flat_keypoints_px.size()) {
+        return fail("Loaded keypoint coordinate cache is too small.");
+    }
+    for (size_t kp_idx = 0; kp_idx < data_.keypoints_per_detection; ++kp_idx) {
+        data_.flat_keypoints_px[flat_base + kp_idx * 2 + 0] =
+            update.keypoints_img[kp_idx][0];
+        data_.flat_keypoints_px[flat_base + kp_idx * 2 + 1] =
+            update.keypoints_img[kp_idx][1];
+    }
+
+    ensure_float(data_.flat_headings_deg, 0.0f);
+    ensure_point(data_.flat_swim_bladder_px, {nan_value, nan_value});
+    ensure_u8(data_.flat_heading_valid, 0);
+    data_.flat_headings_deg[det_row] = update.heading_deg;
+    data_.flat_swim_bladder_px[det_row] = update.heading_origin_img;
+    data_.flat_heading_valid[det_row] = update.heading_valid ? 1 : 0;
+
+    ensure_i32(data_.flat_keypoint_quality_labels, -1);
+    ensure_string(data_.flat_keypoint_reason);
+    ensure_u8(data_.flat_keypoint_flip_corrected, 0);
+    ensure_u8(data_.flat_keypoint_usable, 0);
+    ensure_u8(data_.flat_keypoint_confidence_valid, 0);
+    ensure_u8(data_.flat_keypoint_geometry_valid, 0);
+    ensure_u8(data_.flat_keypoint_refined_success, 0);
+    data_.flat_keypoint_quality_labels[det_row] = update.quality_label;
+    data_.flat_keypoint_reason[det_row] = update.reason;
+    data_.flat_keypoint_flip_corrected[det_row] = update.flip_corrected;
+    data_.flat_keypoint_usable[det_row] = update.usable;
+    data_.flat_keypoint_confidence_valid[det_row] = update.confidence_valid;
+    data_.flat_keypoint_geometry_valid[det_row] = update.geometry_valid;
+    data_.flat_keypoint_refined_success[det_row] = update.refined_success;
+    return true;
 }
 
 bool ZarrDetectionLoader::getCropImageForIndex(int32_t roi_index,

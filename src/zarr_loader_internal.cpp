@@ -545,6 +545,9 @@ std::string extractLatestRunName(const json& attrs) {
     if (attrs.contains("latest_completed") && attrs["latest_completed"].is_string()) {
         return attrs["latest_completed"].get<std::string>();
     }
+    if (attrs.contains("latest_complete") && attrs["latest_complete"].is_string()) {
+        return attrs["latest_complete"].get<std::string>();
+    }
     if (attrs.contains("latest_success") && attrs["latest_success"].is_string()) {
         return attrs["latest_success"].get<std::string>();
     }

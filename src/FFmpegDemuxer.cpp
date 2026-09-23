@@ -58,6 +58,14 @@ double FFmpegDemuxer::GetAvgFramerate() const { return avg_framerate; }
 
 double FFmpegDemuxer::GetTimebase() const { return timebase; }
 
+int32_t FFmpegDemuxer::GetTimebaseNumerator() const {
+    return timebase_numerator;
+}
+
+int32_t FFmpegDemuxer::GetTimebaseDenominator() const {
+    return timebase_denominator;
+}
+
 bool FFmpegDemuxer::IsVFR() const { return framerate != avg_framerate; }
 
 uint32_t FFmpegDemuxer::GetVideoStreamIndex() const { return videoStream; }
@@ -308,40 +316,104 @@ int64_t FFmpegDemuxer::FindClosestKeyFrameFNI(int64_t frame_num,
 }
 
 int64_t FFmpegDemuxer::FindKeyFrameInterval() {
-    int ret = 0;
-    bool eof = false, gotVideo = false;
-    int64_t cnt = 0;
-    int keyframe_encounter = 0;
+    constexpr int64_t kFallbackInterval = 1;
+    if (!fmtc || videoStream < 0) {
+        return kFallbackInterval;
+    }
 
-    while (!eof) {
-        ret = av_read_frame(fmtc, &pktSrc);
+    // This method is called immediately before the same demuxer is handed to
+    // NVDEC. Probing by reading packets must therefore leave the input at its
+    // beginning. Otherwise a GOP=25 stream is consumed through keyframe 25,
+    // decode resumes on an undecodable inter-frame, and NVDEC first emits
+    // keyframe 50 while the caller labels it frame 0.
+    if (!is_seekable) {
+        std::cout << "identified seek interval: " << kFallbackInterval
+                  << " (non-seekable input; probe skipped)" << std::endl;
+        return kFallbackInterval;
+    }
+
+    auto rewindToStreamStart = [&]() {
+        if (pktSrc.data) {
+            av_packet_unref(&pktSrc);
+        }
+        if (pktDst.data) {
+            av_packet_unref(&pktDst);
+        }
+        if (pktSei.data) {
+            av_packet_unref(&pktSei);
+        }
+        if (bsfc_annexb) {
+            av_bsf_flush(bsfc_annexb);
+        }
+        if (bsfc_sei) {
+            av_bsf_flush(bsfc_sei);
+        }
+        annexbBytes.clear();
+        seiBytes.clear();
+
+        int64_t start_ts = fmtc->streams[videoStream]->start_time;
+        if (start_ts == AV_NOPTS_VALUE) {
+            start_ts = 0;
+        }
+        const int seek_result =
+            av_seek_frame(fmtc, videoStream, start_ts, AVSEEK_FLAG_BACKWARD);
+        if (seek_result < 0) {
+            throw runtime_error(
+                "Could not restore demuxer after keyframe interval probe: " +
+                AvErrorToString(seek_result));
+        }
+        avformat_flush(fmtc);
+        is_EOF = false;
+    };
+
+    // Establish a deterministic starting position even if a caller reuses a
+    // demuxer that has already read packets.
+    rewindToStreamStart();
+
+    int64_t video_packet_index = -1;
+    int64_t first_keyframe_index = -1;
+    int64_t interval = kFallbackInterval;
+    bool found_interval = false;
+
+    while (true) {
+        const int ret = av_read_frame(fmtc, &pktSrc);
         if (ret < 0) {
-            if (ret == AVERROR_EOF) {
-                eof = true;
-                break;
-            } else {
-                LOG(FATAL) << "Error: av_read_frame failed with "
-                           << AVERROR(ret);
+            if (ret != AVERROR_EOF) {
+                rewindToStreamStart();
+                throw runtime_error("Error probing keyframe interval: " +
+                                    AvErrorToString(ret));
             }
             break;
         }
 
         if (pktSrc.stream_index == videoStream) {
+            ++video_packet_index;
             if (pktSrc.flags & AV_PKT_FLAG_KEY) {
-                keyframe_encounter++;
+                if (first_keyframe_index < 0) {
+                    first_keyframe_index = video_packet_index;
+                } else {
+                    interval =
+                        std::max<int64_t>(kFallbackInterval,
+                                          video_packet_index -
+                                              first_keyframe_index);
+                    found_interval = true;
+                }
             }
-            ++cnt;
         }
 
-        auto pCopyPacket = av_packet_clone(&pktSrc);
-        av_packet_free(&pCopyPacket);
-
-        if (keyframe_encounter == 2) {
+        av_packet_unref(&pktSrc);
+        if (found_interval) {
             break;
         }
     }
-    std::cout << "identified seek interval: " << cnt - 1 << std::endl;
-    return cnt - 1;
+
+    if (!found_interval && video_packet_index > 0) {
+        interval = video_packet_index;
+    }
+    rewindToStreamStart();
+
+    std::cout << "identified seek interval: " << interval << std::endl;
+    return interval;
 }
 
 // int64_t FFmpegDemuxer::FindKeyFrameInterval() {
@@ -655,6 +727,8 @@ FFmpegDemuxer::FFmpegDemuxer(AVFormatContext *fmtcx) : fmtc(fmtcx) {
                     (double)fmtc->streams[videoStream]->avg_frame_rate.den;
     timebase = (double)fmtc->streams[videoStream]->time_base.num /
                (double)fmtc->streams[videoStream]->time_base.den;
+    timebase_numerator = fmtc->streams[videoStream]->time_base.num;
+    timebase_denominator = fmtc->streams[videoStream]->time_base.den;
     eChromaFormat = (AVPixelFormat)fmtc->streams[videoStream]->codecpar->format;
     nb_frames = fmtc->streams[videoStream]->nb_frames;
     color_space = fmtc->streams[videoStream]->codecpar->color_space;

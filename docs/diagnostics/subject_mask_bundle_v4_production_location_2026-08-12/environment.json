@@ -1,0 +1,13 @@
+{
+  "schema_id": "crimson.subject_mask.bundle_v4_environment",
+  "schema_version": 1,
+  "generated_at_utc": "2026-08-13T03:17:37Z",
+  "architecture": "arm64",
+  "kernel": "Darwin 25.3.0 Darwin Kernel Version 25.3.0: Wed Jan 28 20:56:34 PST 2026; root:xnu-12377.91.3~2/RELEASE_ARM64_T8122",
+  "macos_version": "26.3.1",
+  "fixture_root": "/Volumes/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095",
+  "workload": "/Users/jmdelahanty/gitrepos/crimson-macos/tools/fixtures/subject_mask_bundle_v4_qualification_workload_v1.json",
+  "expected_crimson_commit": "e570e46006f06f50687f86d9df108fcefb255c8c",
+  "mount_cache_state": "uncontrolled_macos_and_network_filesystem_cache",
+  "tensorstore_cache_policy": "benchmark_workload_declared"
+}

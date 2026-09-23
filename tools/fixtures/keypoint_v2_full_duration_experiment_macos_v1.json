@@ -1,0 +1,44 @@
+{
+  "schema_id": "crimson.keypoint_v2.long_duration_experiment",
+  "schema_version": 1,
+  "description": "Full-duration mounted macOS gate for the refined keypoint-v2 presentation path from Palette's selector-ineligible Sleepyfish v8 storage candidate.",
+  "workload": "keypoint_v2_long_duration_workload_v1.json",
+  "repetition_count": 5,
+  "timeout_seconds": 900.0,
+  "expected_crimson_commit": "72ddcd1109078bf97c7e0063bfe9aa16abb63d79",
+  "evidence_files": [
+    {
+      "path": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/crimson_storage_candidates/sleepyfish_cam2010095_full_v8_20260730/handoff_manifest.json",
+      "sha256": "86e638ed977f71a69bdd4fd334d7778583226901e7acfc22f790607e8b6fc374"
+    }
+  ],
+  "candidates": [
+    {
+      "id": "refined_keypoints_full_v8",
+      "mode": "refined",
+      "description": "Refined keypoint observations v2 with raw observations, lazy raw-bound quality, and the refined-derived body-frame product.",
+      "handoff_sha256": "86e638ed977f71a69bdd4fd334d7778583226901e7acfc22f790607e8b6fc374",
+      "raw": {
+        "store": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/crimson_storage_candidates/sleepyfish_cam2010095_full_v8_20260730/keypoints/raw_keypoints.zarr",
+        "run": "raw_keypoints_sleepyfish_cam2010095_full_v8_20260730",
+        "manifest_digest": "12c2697e071be42cbfa574625b66186a97a63ebc72eba5a3e290d6efb730ab42"
+      },
+      "quality": {
+        "store": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/crimson_storage_candidates/sleepyfish_cam2010095_full_v8_20260730/keypoints/keypoint_quality.zarr",
+        "run": "keypoint_quality_sleepyfish_cam2010095_full_v8_20260730",
+        "manifest_digest": "a6b887d6a241dd021bbf410fefa5b091d9ece1b655a69f05e62f70fc0bed85b9"
+      },
+      "refined": {
+        "store": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/crimson_storage_candidates/sleepyfish_cam2010095_full_v8_20260730/keypoints/refined_keypoints.zarr",
+        "run": "refined_keypoints_sleepyfish_cam2010095_full_v8_20260730",
+        "manifest_digest": "f6348f815eea9c3ae574e0fe142e7906185aa4d95e8207d041b8d116ecc63fae"
+      },
+      "body_frame": {
+        "store": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/crimson_storage_candidates/sleepyfish_cam2010095_full_v8_20260730/keypoints/body_frame.zarr",
+        "run": "body_frame_sleepyfish_cam2010095_full_v8_20260730",
+        "manifest_digest": "c409fbabc10b0625051c43853b469abfca5723a16d93ab5fcf42e40b9b106848"
+      }
+    }
+  ],
+  "comparisons": []
+}

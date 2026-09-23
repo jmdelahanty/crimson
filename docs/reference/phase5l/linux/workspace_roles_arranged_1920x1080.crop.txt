@@ -1,0 +1,10 @@
+The client PNG is derived from the decorated X11 capture:
+
+  source: workspace_roles_arranged_1920x1080.outer.png
+  source dimensions: 1948x1146
+  crop: width=1920 height=1080 x=14 y=52
+  command: ffmpeg -vf crop=1920:1080:14:52
+
+The crop removes only Mutter window decoration and retains the complete redgui
+client. The outer PNG, X properties, geometry, and xwininfo output are retained
+beside it for auditability.

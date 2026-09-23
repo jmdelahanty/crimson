@@ -1,0 +1,2413 @@
+{
+  "schema_id": "crimson.keypoint_v2.long_duration_aggregate",
+  "schema_version": 1,
+  "status": "pass",
+  "classification": "keypoint_v2_fresh_process_experiment",
+  "profile_selection_verdict": "not_applicable",
+  "created_unix_seconds": 1785959569.906941,
+  "wall_elapsed_seconds": 8.157549142837524,
+  "experiment_path": "/Users/jmdelahanty/gitrepos/crimson-macos/tools/fixtures/keypoint_v2_batman_canary_experiment_macos_v1.json",
+  "experiment_file_sha256": "6138f0cc90381a1474ddb69af499831b87621e26ae4b8dd894fc444395b95e14",
+  "experiment_canonical_sha256": "59d87c29786f1827b25c002d2218288b949d89c85681f6b7faffd45babea7b48",
+  "workload_path": "/Users/jmdelahanty/gitrepos/crimson-macos/tools/fixtures/keypoint_v2_long_duration_workload_v1.json",
+  "workload_file_sha256": "26da2cadf14bae3df42414586234eddcc47486bcfdfb9d3592a96d7d5063ad99",
+  "workload_canonical_sha256": "c419afa719b4d2b5c43e3fe1a0a89fe6e095c1f27024ebc14e1dcc0f63372ce2",
+  "binary": "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/keypoint_v2_long_duration_benchmark",
+  "binary_sha256": "08abdf0b488db7038f8027378cd6dca4a58bd2261e3d7b101ca51436ddb68113",
+  "environment": {
+    "platform": "macOS-26.3.1-arm64-arm-64bit",
+    "machine": "arm64",
+    "python": "3.9.6 (default, Apr 30 2025, 02:07:17) \n[Clang 17.0.0 (clang-1700.0.13.5)]",
+    "repository_commit": "c485b80596dc30dd1b3d311943c3761ff6ac3921",
+    "repository_status": "",
+    "mount": "/dev/disk3s1s1 on / (apfs, sealed, local, read-only, journaled)\ndevfs on /dev (devfs, local, nobrowse)\n/dev/disk3s6 on /System/Volumes/VM (apfs, local, noexec, journaled, noatime, nobrowse)\n/dev/disk3s2 on /System/Volumes/Preboot (apfs, local, journaled, nobrowse)\n/dev/disk3s4 on /System/Volumes/Update (apfs, local, journaled, nobrowse)\n/dev/disk1s2 on /System/Volumes/xarts (apfs, local, noexec, journaled, noatime, nobrowse)\n/dev/disk1s1 on /System/Volumes/iSCPreboot (apfs, local, journaled, nobrowse)\n/dev/disk1s3 on /System/Volumes/Hardware (apfs, local, journaled, nobrowse)\n/dev/disk3s5 on /System/Volumes/Data (apfs, local, journaled, nobrowse, protect, root data)\nmap auto_home on /System/Volumes/Data/home (autofs, automounted, nobrowse)\n/dev/disk2s1 on /System/Volumes/Update/SFR/mnt1 (apfs, local, journaled, nobrowse)\n/dev/disk3s1 on /System/Volumes/Update/mnt1 (apfs, sealed, local, journaled, nobrowse)\n//delahantyj@prfs.hhmi.org/johnsonlab on /Volumes/johnsonlab (smbfs, nodev, nosuid, mounted by jmdelahanty)",
+    "network": "No network information",
+    "vpn": "Available network connection services in the current set (*=enabled):",
+    "cache_condition": "fresh process; OS/filesystem/server cache uncontrolled"
+  },
+  "candidate_order": [
+    {
+      "position": 0,
+      "repetition": 0,
+      "ordinal_within_repetition": 0,
+      "candidate": "batman_refined_keypoints_v2"
+    },
+    {
+      "position": 1,
+      "repetition": 1,
+      "ordinal_within_repetition": 0,
+      "candidate": "batman_refined_keypoints_v2"
+    },
+    {
+      "position": 2,
+      "repetition": 2,
+      "ordinal_within_repetition": 0,
+      "candidate": "batman_refined_keypoints_v2"
+    },
+    {
+      "position": 3,
+      "repetition": 3,
+      "ordinal_within_repetition": 0,
+      "candidate": "batman_refined_keypoints_v2"
+    },
+    {
+      "position": 4,
+      "repetition": 4,
+      "ordinal_within_repetition": 0,
+      "candidate": "batman_refined_keypoints_v2"
+    }
+  ],
+  "candidate_ordinal_counts": {
+    "batman_refined_keypoints_v2": {
+      "0": 5
+    }
+  },
+  "candidate_declarations": [
+    {
+      "id": "batman_refined_keypoints_v2",
+      "mode": "refined",
+      "description": "Batman refined keypoint observations v2 with exact raw, lazy quality, and refined-derived body-frame bindings.",
+      "deep_validate_identity": true,
+      "raw": {
+        "store": "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr",
+        "run": "keypoints_batman_kpt5_v2_canary_20260805_v005",
+        "manifest_digest": "dd5aa05452bcb05f820a44d39795689e0981b6bf33cbb3235af584a9164d956e"
+      },
+      "quality": {
+        "store": "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr",
+        "run": "keypoint_quality_batman_kpt5_v2_canary_20260805_v005",
+        "manifest_digest": "daee5983024d78c96bc0b8d31ef3713a97a733dc65f1260b5b69bcf61f1eaca4"
+      },
+      "refined": {
+        "store": "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr",
+        "run": "refined_keypoints_batman_kpt5_v2_canary_20260805_v005",
+        "manifest_digest": "acd2d14f7bbed7a468ea0fd6262633a38f16dbf3d6ea48f915c81834c476412f"
+      },
+      "body_frame": {
+        "store": "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr",
+        "run": "body_frame_batman_kpt5_v2_canary_20260805_v005",
+        "manifest_digest": "0e0c44a708afb0619dbc934029ac800ad3ed97f8acea429dd81057b66579be93"
+      }
+    }
+  ],
+  "trials": [
+    {
+      "position": 0,
+      "repetition": 0,
+      "ordinal_within_repetition": 0,
+      "candidate": "batman_refined_keypoints_v2",
+      "command": [
+        "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/keypoint_v2_long_duration_benchmark",
+        "--mode",
+        "refined",
+        "--raw-store",
+        "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr",
+        "--raw-run",
+        "keypoints_batman_kpt5_v2_canary_20260805_v005",
+        "--raw-digest",
+        "dd5aa05452bcb05f820a44d39795689e0981b6bf33cbb3235af584a9164d956e",
+        "--quality-store",
+        "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr",
+        "--quality-run",
+        "keypoint_quality_batman_kpt5_v2_canary_20260805_v005",
+        "--quality-digest",
+        "daee5983024d78c96bc0b8d31ef3713a97a733dc65f1260b5b69bcf61f1eaca4",
+        "--body-store",
+        "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr",
+        "--body-run",
+        "body_frame_batman_kpt5_v2_canary_20260805_v005",
+        "--body-digest",
+        "0e0c44a708afb0619dbc934029ac800ad3ed97f8acea429dd81057b66579be93",
+        "--workload",
+        "/Users/jmdelahanty/gitrepos/crimson-macos/tools/fixtures/keypoint_v2_long_duration_workload_v1.json",
+        "--repetition",
+        "0",
+        "--output",
+        "/private/tmp/crimson-batman-keypoint-v2-20260805/00_repetition_0_batman_refined_keypoints_v2.json",
+        "--refined-store",
+        "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr",
+        "--refined-run",
+        "refined_keypoints_batman_kpt5_v2_canary_20260805_v005",
+        "--refined-digest",
+        "acd2d14f7bbed7a468ea0fd6262633a38f16dbf3d6ea48f915c81834c476412f",
+        "--deep-validate-identity"
+      ],
+      "result_path": "/private/tmp/crimson-batman-keypoint-v2-20260805/00_repetition_0_batman_refined_keypoints_v2.json",
+      "stdout_path": "/private/tmp/crimson-batman-keypoint-v2-20260805/00_repetition_0_batman_refined_keypoints_v2.stdout.log",
+      "stderr_path": "/private/tmp/crimson-batman-keypoint-v2-20260805/00_repetition_0_batman_refined_keypoints_v2.stderr.log",
+      "subprocess_returncode": 0,
+      "subprocess_elapsed_ms": 4898.55,
+      "timed_out": false,
+      "resumed": false,
+      "pass": true,
+      "result": {
+        "access_metrics": {
+          "frame_requests": 7480,
+          "maximum_columns_per_batch": 24,
+          "payload_read_batches": 7429,
+          "payload_read_calls": 178296,
+          "quality_payload_read_calls": 0,
+          "read_failures": 0,
+          "rows_resolved": 7429
+        },
+        "archive_open_ms": 5.486458,
+        "archives": [
+          {
+            "cache_pool_bytes": 67108864,
+            "path": "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr"
+          }
+        ],
+        "buffer_metrics": {
+          "cache_hits": 1,
+          "discarded_results": 195,
+          "failed_frames": 0,
+          "last_error": "",
+          "maximum_resolve_ms": 167.312083,
+          "missing_frames": 42,
+          "peak_cached_frames": 24,
+          "peak_pending_frames": 13,
+          "requests": 7289,
+          "resolved_frames": 7243
+        },
+        "classification": "full_duration_acceptance_process_trial",
+        "close_ms": 0.059292,
+        "configured_cache_bytes": 67108864,
+        "crimson_commit": "c485b80596dc30dd1b3d311943c3761ff6ac3921",
+        "deep_validate_identity": true,
+        "effective_deadline_miss_ratio": 0.0,
+        "first_presentation": {
+          "elapsed_ms": 167.468291,
+          "frame": 94116,
+          "logical_digest": "9fd8d3d2074bf24a94fe68044ce327ec7d4b9358244dae2d59a8250e61f83608",
+          "observations": 1,
+          "physical": {
+            "cache_evictions": 0,
+            "cache_hits": 11,
+            "cache_misses": 19,
+            "file_batch_reads": 13,
+            "file_bytes": 2653803,
+            "file_reads": 17
+          }
+        },
+        "first_presentation_readiness_ms": 3984.05025,
+        "forward_traversal": {
+          "average_ms": 0.05253587085714293,
+          "deadline_ms": 100.0,
+          "elapsed_ms": 183.87554800000026,
+          "logical_digest": "41600b52f60fc638fd1bd68e85c17872fad48775b00b347d7b32e7710e59a3ee",
+          "maximum_ms": 0.147125,
+          "observations": 3500,
+          "p50_ms": 0.050792,
+          "p95_ms": 0.071875,
+          "page_count": 50,
+          "page_frames": 70,
+          "page_p50_ms": 3.539208,
+          "page_p95_ms": 4.525458,
+          "physical": {
+            "cache_evictions": 0,
+            "cache_hits": 98026,
+            "cache_misses": 0,
+            "file_batch_reads": 0,
+            "file_bytes": 0,
+            "file_reads": 0
+          },
+          "post_warmup_deadline_miss_ratio": 0.0,
+          "post_warmup_deadline_misses": 0,
+          "post_warmup_measured_pages": 49,
+          "requests": 3500,
+          "warmup_pages": 1
+        },
+        "frame_count": 139295,
+        "gate_failures": [],
+        "keypoint_count": 5,
+        "mode": "refined",
+        "open_metrics": {
+          "body_frame_offset_read_calls": 1,
+          "consolidated_array_declarations": 61,
+          "direct_metadata_reads": 65,
+          "exact_handle_open_ms": 4.407375,
+          "exact_handle_opens": 61,
+          "fallback_dtype_opens": 0,
+          "fallback_metadata_reads": 0,
+          "identity_validation_ms": 1527.360333,
+          "metadata_ms": 2268.961084,
+          "quality_offset_read_calls": 0,
+          "quality_payload_reads": 0,
+          "raw_offset_read_calls": 1,
+          "retained_offset_bytes": 3343104,
+          "root_metadata_reads": 4,
+          "selected_offset_read_calls": 1,
+          "total_ms": 3800.789583
+        },
+        "peak_rss_bytes": 104595456,
+        "process_physical": {
+          "cache_evictions": 0,
+          "cache_hits": 207995,
+          "cache_misses": 115,
+          "file_batch_reads": 105,
+          "file_bytes": 32231237,
+          "file_reads": 109
+        },
+        "profile_promotion_verdict": "pending_paired_repetitions",
+        "random_process_first": {
+          "average_ms": 1.0594290468750003,
+          "elapsed_ms": 135.60691800000004,
+          "logical_digest": "33ebc1d17299a5b73170770b56dc21ef89d5c5034db6609a2851ca8a67f9732b",
+          "maximum_ms": 51.64375,
+          "observations": 112,
+          "p50_ms": 0.142042,
+          "p95_ms": 0.284916,
+          "physical": {
+            "cache_evictions": 0,
+            "cache_hits": 5655,
+            "cache_misses": 4,
+            "file_batch_reads": 4,
+            "file_bytes": 2725461,
+            "file_reads": 4
+          },
+          "requests": 128
+        },
+        "random_warm": {
+          "average_ms": 0.11893224999999998,
+          "elapsed_ms": 15.223327999999997,
+          "logical_digest": "33ebc1d17299a5b73170770b56dc21ef89d5c5034db6609a2851ca8a67f9732b",
+          "maximum_ms": 0.210125,
+          "observations": 112,
+          "p50_ms": 0.12225,
+          "p95_ms": 0.164416,
+          "physical": {
+            "cache_evictions": 0,
+            "cache_hits": 5593,
+            "cache_misses": 0,
+            "file_batch_reads": 0,
+            "file_bytes": 0,
+            "file_reads": 0
+          },
+          "requests": 128
+        },
+        "rapid_seeks": {
+          "cancelled_requests": 413,
+          "discarded_completions": 6,
+          "final_frame": 34099,
+          "final_readiness_ms": 0.428333,
+          "physical_transfer_upper_bound": {
+            "cache_evictions": 0,
+            "cache_hits": 532,
+            "cache_misses": 0,
+            "file_batch_reads": 0,
+            "file_bytes": 0,
+            "file_reads": 0
+          },
+          "requests": 32,
+          "stale_visible_frames": 0
+        },
+        "repetition": 0,
+        "repository_open_ms": 3810.898625,
+        "reverse_traversal": {
+          "average_ms": 0.04843200799999985,
+          "deadline_ms": 100.0,
+          "elapsed_ms": 169.51202799999948,
+          "logical_digest": "b4d384f2c3b542ebcca0db0fcefd62cf66c60c9a77f9f098c70899f858dc78d3",
+          "maximum_ms": 0.090208,
+          "observations": 3500,
+          "p50_ms": 0.046958,
+          "p95_ms": 0.064291,
+          "page_count": 50,
+          "page_frames": 70,
+          "page_p50_ms": 3.39075,
+          "page_p95_ms": 3.530459,
+          "physical": {
+            "cache_evictions": 0,
+            "cache_hits": 98028,
+            "cache_misses": 0,
+            "file_batch_reads": 0,
+            "file_bytes": 0,
+            "file_reads": 0
+          },
+          "post_warmup_deadline_miss_ratio": 0.0,
+          "post_warmup_deadline_misses": 0,
+          "post_warmup_measured_pages": 49,
+          "requests": 3500,
+          "warmup_pages": 1
+        },
+        "row_count": 126214,
+        "scheduler_metrics": {
+          "accepted": 10781,
+          "cancelled": 3564,
+          "completed": 7482,
+          "discarded": 197,
+          "duplicates": 83823,
+          "failed": 0,
+          "peak_active": 4,
+          "peak_active_non_current": 1,
+          "peak_active_speculative": 1,
+          "peak_pending": 13,
+          "promotions": 140,
+          "reserved_current_frame_workers": 1,
+          "submissions": 94744,
+          "timing_by_priority": {
+            "current_frame": {
+              "completed": 406,
+              "queue_average_ms": 0.00923792857142857,
+              "queue_maximum_ms": 0.145125,
+              "queue_wait_over_1000_ms": 0,
+              "queue_wait_over_100_ms": 0,
+              "queue_wait_over_5000_ms": 0,
+              "service_average_ms": 0.7811030320197049,
+              "service_maximum_ms": 167.388834,
+              "service_over_1000_ms": 0,
+              "service_over_100_ms": 1,
+              "service_over_5000_ms": 0,
+              "started": 406
+            },
+            "history": {
+              "completed": 0,
+              "queue_average_ms": 0.0,
+              "queue_maximum_ms": 0.0,
+              "queue_wait_over_1000_ms": 0,
+              "queue_wait_over_100_ms": 0,
+              "queue_wait_over_5000_ms": 0,
+              "service_average_ms": 0.0,
+              "service_maximum_ms": 0.0,
+              "service_over_1000_ms": 0,
+              "service_over_100_ms": 0,
+              "service_over_5000_ms": 0,
+              "started": 0
+            },
+            "inspection": {
+              "completed": 0,
+              "queue_average_ms": 0.0,
+              "queue_maximum_ms": 0.0,
+              "queue_wait_over_1000_ms": 0,
+              "queue_wait_over_100_ms": 0,
+              "queue_wait_over_5000_ms": 0,
+              "service_average_ms": 0.0,
+              "service_maximum_ms": 0.0,
+              "service_over_1000_ms": 0,
+              "service_over_100_ms": 0,
+              "service_over_5000_ms": 0,
+              "started": 0
+            },
+            "speculative": {
+              "completed": 7076,
+              "queue_average_ms": 0.6137338900508751,
+              "queue_maximum_ms": 167.421375,
+              "queue_wait_over_1000_ms": 0,
+              "queue_wait_over_100_ms": 1,
+              "queue_wait_over_5000_ms": 0,
+              "service_average_ms": 0.05048627642736011,
+              "service_maximum_ms": 0.381125,
+              "service_over_1000_ms": 0,
+              "service_over_100_ms": 0,
+              "service_over_5000_ms": 0,
+              "started": 7076
+            },
+            "visible_window": {
+              "completed": 0,
+              "queue_average_ms": 0.0,
+              "queue_maximum_ms": 0.0,
+              "queue_wait_over_1000_ms": 0,
+              "queue_wait_over_100_ms": 0,
+              "queue_wait_over_5000_ms": 0,
+              "service_average_ms": 0.0,
+              "service_maximum_ms": 0.0,
+              "service_over_1000_ms": 0,
+              "service_over_100_ms": 0,
+              "service_over_5000_ms": 0,
+              "started": 0
+            }
+          },
+          "timing_by_source": [
+            {
+              "archive": "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr",
+              "by_priority": {
+                "current_frame": {
+                  "completed": 406,
+                  "queue_average_ms": 0.00923792857142857,
+                  "queue_maximum_ms": 0.145125,
+                  "queue_wait_over_1000_ms": 0,
+                  "queue_wait_over_100_ms": 0,
+                  "queue_wait_over_5000_ms": 0,
+                  "service_average_ms": 0.7811030320197049,
+                  "service_maximum_ms": 167.388834,
+                  "service_over_1000_ms": 0,
+                  "service_over_100_ms": 1,
+                  "service_over_5000_ms": 0,
+                  "started": 406
+                },
+                "speculative": {
+                  "completed": 7076,
+                  "queue_average_ms": 0.6137338900508751,
+                  "queue_maximum_ms": 167.421375,
+                  "queue_wait_over_1000_ms": 0,
+                  "queue_wait_over_100_ms": 1,
+                  "queue_wait_over_5000_ms": 0,
+                  "service_average_ms": 0.05048627642736011,
+                  "service_maximum_ms": 0.381125,
+                  "service_over_1000_ms": 0,
+                  "service_over_100_ms": 0,
+                  "service_over_5000_ms": 0,
+                  "started": 7076
+                }
+              },
+              "product": "keypoints",
+              "run": "refined_keypoints_runs/refined_keypoints_batman_kpt5_v2_canary_20260805_v005"
+            }
+          ],
+          "work_exceptions": 0,
+          "workers": 4
+        },
+        "schema_id": "crimson.keypoint_v2.long_duration_benchmark",
+        "schema_version": 1,
+        "selected_manifest_digest": "acd2d14f7bbed7a468ea0fd6262633a38f16dbf3d6ea48f915c81834c476412f",
+        "selected_run": "refined_keypoints_batman_kpt5_v2_canary_20260805_v005",
+        "status": "pass",
+        "workload_path": "/Users/jmdelahanty/gitrepos/crimson-macos/tools/fixtures/keypoint_v2_long_duration_workload_v1.json",
+        "workload_sha256": "c419afa719b4d2b5c43e3fe1a0a89fe6e095c1f27024ebc14e1dcc0f63372ce2",
+        "worktree_dirty": false
+      }
+    },
+    {
+      "position": 1,
+      "repetition": 1,
+      "ordinal_within_repetition": 0,
+      "candidate": "batman_refined_keypoints_v2",
+      "command": [
+        "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/keypoint_v2_long_duration_benchmark",
+        "--mode",
+        "refined",
+        "--raw-store",
+        "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr",
+        "--raw-run",
+        "keypoints_batman_kpt5_v2_canary_20260805_v005",
+        "--raw-digest",
+        "dd5aa05452bcb05f820a44d39795689e0981b6bf33cbb3235af584a9164d956e",
+        "--quality-store",
+        "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr",
+        "--quality-run",
+        "keypoint_quality_batman_kpt5_v2_canary_20260805_v005",
+        "--quality-digest",
+        "daee5983024d78c96bc0b8d31ef3713a97a733dc65f1260b5b69bcf61f1eaca4",
+        "--body-store",
+        "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr",
+        "--body-run",
+        "body_frame_batman_kpt5_v2_canary_20260805_v005",
+        "--body-digest",
+        "0e0c44a708afb0619dbc934029ac800ad3ed97f8acea429dd81057b66579be93",
+        "--workload",
+        "/Users/jmdelahanty/gitrepos/crimson-macos/tools/fixtures/keypoint_v2_long_duration_workload_v1.json",
+        "--repetition",
+        "1",
+        "--output",
+        "/private/tmp/crimson-batman-keypoint-v2-20260805/01_repetition_1_batman_refined_keypoints_v2.json",
+        "--refined-store",
+        "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr",
+        "--refined-run",
+        "refined_keypoints_batman_kpt5_v2_canary_20260805_v005",
+        "--refined-digest",
+        "acd2d14f7bbed7a468ea0fd6262633a38f16dbf3d6ea48f915c81834c476412f",
+        "--deep-validate-identity"
+      ],
+      "result_path": "/private/tmp/crimson-batman-keypoint-v2-20260805/01_repetition_1_batman_refined_keypoints_v2.json",
+      "stdout_path": "/private/tmp/crimson-batman-keypoint-v2-20260805/01_repetition_1_batman_refined_keypoints_v2.stdout.log",
+      "stderr_path": "/private/tmp/crimson-batman-keypoint-v2-20260805/01_repetition_1_batman_refined_keypoints_v2.stderr.log",
+      "subprocess_returncode": 0,
+      "subprocess_elapsed_ms": 1229.0667090000004,
+      "timed_out": false,
+      "resumed": false,
+      "pass": true,
+      "result": {
+        "access_metrics": {
+          "frame_requests": 7453,
+          "maximum_columns_per_batch": 24,
+          "payload_read_batches": 7414,
+          "payload_read_calls": 177936,
+          "quality_payload_read_calls": 0,
+          "read_failures": 0,
+          "rows_resolved": 7414
+        },
+        "archive_open_ms": 0.048583,
+        "archives": [
+          {
+            "cache_pool_bytes": 67108864,
+            "path": "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr"
+          }
+        ],
+        "buffer_metrics": {
+          "cache_hits": 0,
+          "discarded_results": 177,
+          "failed_frames": 0,
+          "last_error": "",
+          "maximum_resolve_ms": 8.508084,
+          "missing_frames": 34,
+          "peak_cached_frames": 24,
+          "peak_pending_frames": 13,
+          "requests": 7289,
+          "resolved_frames": 7242
+        },
+        "classification": "full_duration_acceptance_process_trial",
+        "close_ms": 0.058625,
+        "configured_cache_bytes": 67108864,
+        "crimson_commit": "c485b80596dc30dd1b3d311943c3761ff6ac3921",
+        "deep_validate_identity": true,
+        "effective_deadline_miss_ratio": 0.0,
+        "first_presentation": {
+          "elapsed_ms": 8.540625,
+          "frame": 79493,
+          "logical_digest": "7c583d8f1f0fe422bb19c6790e9cc9fc6a9612cb37d968f93994a0c3feda7618",
+          "observations": 1,
+          "physical": {
+            "cache_evictions": 0,
+            "cache_hits": 13,
+            "cache_misses": 19,
+            "file_batch_reads": 13,
+            "file_bytes": 2653803,
+            "file_reads": 17
+          }
+        },
+        "first_presentation_readiness_ms": 819.304375,
+        "forward_traversal": {
+          "average_ms": 0.05541148885714292,
+          "deadline_ms": 100.0,
+          "elapsed_ms": 193.94021100000023,
+          "logical_digest": "3d63eb96d95ad94c27f49d4ed91c0b66b31b5650524f3f97b8cc87d614afd2a6",
+          "maximum_ms": 0.117125,
+          "observations": 3500,
+          "p50_ms": 0.053084,
+          "p95_ms": 0.077583,
+          "page_count": 50,
+          "page_frames": 70,
+          "page_p50_ms": 3.698375,
+          "page_p95_ms": 4.607958,
+          "physical": {
+            "cache_evictions": 0,
+            "cache_hits": 98031,
+            "cache_misses": 0,
+            "file_batch_reads": 0,
+            "file_bytes": 0,
+            "file_reads": 0
+          },
+          "post_warmup_deadline_miss_ratio": 0.0,
+          "post_warmup_deadline_misses": 0,
+          "post_warmup_measured_pages": 49,
+          "requests": 3500,
+          "warmup_pages": 1
+        },
+        "frame_count": 139295,
+        "gate_failures": [],
+        "keypoint_count": 5,
+        "mode": "refined",
+        "open_metrics": {
+          "body_frame_offset_read_calls": 1,
+          "consolidated_array_declarations": 61,
+          "direct_metadata_reads": 65,
+          "exact_handle_open_ms": 4.414291,
+          "exact_handle_opens": 61,
+          "fallback_dtype_opens": 0,
+          "fallback_metadata_reads": 0,
+          "identity_validation_ms": 185.357125,
+          "metadata_ms": 612.343333,
+          "quality_offset_read_calls": 0,
+          "quality_payload_reads": 0,
+          "raw_offset_read_calls": 1,
+          "retained_offset_bytes": 3343104,
+          "root_metadata_reads": 4,
+          "selected_offset_read_calls": 1,
+          "total_ms": 802.130708
+        },
+        "peak_rss_bytes": 104595456,
+        "process_physical": {
+          "cache_evictions": 0,
+          "cache_hits": 207575,
+          "cache_misses": 115,
+          "file_batch_reads": 105,
+          "file_bytes": 32231237,
+          "file_reads": 109
+        },
+        "profile_promotion_verdict": "pending_paired_repetitions",
+        "random_process_first": {
+          "average_ms": 0.12455762499999998,
+          "elapsed_ms": 15.943375999999997,
+          "logical_digest": "654cbf71f0564152bb0d23e0297102434a9608cbffd6055b693f16d2c0be6d59",
+          "maximum_ms": 1.299458,
+          "observations": 115,
+          "p50_ms": 0.104291,
+          "p95_ms": 0.157,
+          "physical": {
+            "cache_evictions": 0,
+            "cache_hits": 5571,
+            "cache_misses": 4,
+            "file_batch_reads": 4,
+            "file_bytes": 2725461,
+            "file_reads": 4
+          },
+          "requests": 128
+        },
+        "random_warm": {
+          "average_ms": 0.08783753124999998,
+          "elapsed_ms": 11.243203999999997,
+          "logical_digest": "654cbf71f0564152bb0d23e0297102434a9608cbffd6055b693f16d2c0be6d59",
+          "maximum_ms": 0.17675,
+          "observations": 115,
+          "p50_ms": 0.088833,
+          "p95_ms": 0.129166,
+          "physical": {
+            "cache_evictions": 0,
+            "cache_hits": 5508,
+            "cache_misses": 0,
+            "file_batch_reads": 0,
+            "file_bytes": 0,
+            "file_reads": 0
+          },
+          "requests": 128
+        },
+        "rapid_seeks": {
+          "cancelled_requests": 413,
+          "discarded_completions": 4,
+          "final_frame": 74230,
+          "final_readiness_ms": 0.29525,
+          "physical_transfer_upper_bound": {
+            "cache_evictions": 0,
+            "cache_hits": 224,
+            "cache_misses": 0,
+            "file_batch_reads": 0,
+            "file_bytes": 0,
+            "file_reads": 0
+          },
+          "requests": 32,
+          "stale_visible_frames": 0
+        },
+        "repetition": 1,
+        "repository_open_ms": 810.609583,
+        "reverse_traversal": {
+          "average_ms": 0.04866842628571424,
+          "deadline_ms": 100.0,
+          "elapsed_ms": 170.33949199999984,
+          "logical_digest": "1966b43e4e49dddf2a4d2131f6670453bb5281d07b996fc04029172ceba8a36f",
+          "maximum_ms": 0.102583,
+          "observations": 3500,
+          "p50_ms": 0.047792,
+          "p95_ms": 0.065167,
+          "page_count": 50,
+          "page_frames": 70,
+          "page_p50_ms": 3.393041,
+          "page_p95_ms": 3.6725,
+          "physical": {
+            "cache_evictions": 0,
+            "cache_hits": 98057,
+            "cache_misses": 0,
+            "file_batch_reads": 0,
+            "file_bytes": 0,
+            "file_reads": 0
+          },
+          "post_warmup_deadline_miss_ratio": 0.0,
+          "post_warmup_deadline_misses": 0,
+          "post_warmup_measured_pages": 49,
+          "requests": 3500,
+          "warmup_pages": 1
+        },
+        "row_count": 126214,
+        "scheduler_metrics": {
+          "accepted": 10793,
+          "cancelled": 3573,
+          "completed": 7454,
+          "discarded": 178,
+          "duplicates": 83827,
+          "failed": 0,
+          "peak_active": 4,
+          "peak_active_non_current": 1,
+          "peak_active_speculative": 1,
+          "peak_pending": 13,
+          "promotions": 137,
+          "reserved_current_frame_workers": 1,
+          "submissions": 94757,
+          "timing_by_priority": {
+            "current_frame": {
+              "completed": 401,
+              "queue_average_ms": 0.006562418952618457,
+              "queue_maximum_ms": 0.044416,
+              "queue_wait_over_1000_ms": 0,
+              "queue_wait_over_100_ms": 0,
+              "queue_wait_over_5000_ms": 0,
+              "service_average_ms": 0.09278701246882785,
+              "service_maximum_ms": 8.515417,
+              "service_over_1000_ms": 0,
+              "service_over_100_ms": 0,
+              "service_over_5000_ms": 0,
+              "started": 401
+            },
+            "history": {
+              "completed": 0,
+              "queue_average_ms": 0.0,
+              "queue_maximum_ms": 0.0,
+              "queue_wait_over_1000_ms": 0,
+              "queue_wait_over_100_ms": 0,
+              "queue_wait_over_5000_ms": 0,
+              "service_average_ms": 0.0,
+              "service_maximum_ms": 0.0,
+              "service_over_1000_ms": 0,
+              "service_over_100_ms": 0,
+              "service_over_5000_ms": 0,
+              "started": 0
+            },
+            "inspection": {
+              "completed": 0,
+              "queue_average_ms": 0.0,
+              "queue_maximum_ms": 0.0,
+              "queue_wait_over_1000_ms": 0,
+              "queue_wait_over_100_ms": 0,
+              "queue_wait_over_5000_ms": 0,
+              "service_average_ms": 0.0,
+              "service_maximum_ms": 0.0,
+              "service_over_1000_ms": 0,
+              "service_over_100_ms": 0,
+              "service_over_5000_ms": 0,
+              "started": 0
+            },
+            "speculative": {
+              "completed": 7053,
+              "queue_average_ms": 0.594373472281299,
+              "queue_maximum_ms": 8.512625,
+              "queue_wait_over_1000_ms": 0,
+              "queue_wait_over_100_ms": 0,
+              "queue_wait_over_5000_ms": 0,
+              "service_average_ms": 0.05083407727208278,
+              "service_maximum_ms": 0.336,
+              "service_over_1000_ms": 0,
+              "service_over_100_ms": 0,
+              "service_over_5000_ms": 0,
+              "started": 7053
+            },
+            "visible_window": {
+              "completed": 0,
+              "queue_average_ms": 0.0,
+              "queue_maximum_ms": 0.0,
+              "queue_wait_over_1000_ms": 0,
+              "queue_wait_over_100_ms": 0,
+              "queue_wait_over_5000_ms": 0,
+              "service_average_ms": 0.0,
+              "service_maximum_ms": 0.0,
+              "service_over_1000_ms": 0,
+              "service_over_100_ms": 0,
+              "service_over_5000_ms": 0,
+              "started": 0
+            }
+          },
+          "timing_by_source": [
+            {
+              "archive": "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr",
+              "by_priority": {
+                "current_frame": {
+                  "completed": 401,
+                  "queue_average_ms": 0.006562418952618457,
+                  "queue_maximum_ms": 0.044416,
+                  "queue_wait_over_1000_ms": 0,
+                  "queue_wait_over_100_ms": 0,
+                  "queue_wait_over_5000_ms": 0,
+                  "service_average_ms": 0.09278701246882785,
+                  "service_maximum_ms": 8.515417,
+                  "service_over_1000_ms": 0,
+                  "service_over_100_ms": 0,
+                  "service_over_5000_ms": 0,
+                  "started": 401
+                },
+                "speculative": {
+                  "completed": 7053,
+                  "queue_average_ms": 0.594373472281299,
+                  "queue_maximum_ms": 8.512625,
+                  "queue_wait_over_1000_ms": 0,
+                  "queue_wait_over_100_ms": 0,
+                  "queue_wait_over_5000_ms": 0,
+                  "service_average_ms": 0.05083407727208278,
+                  "service_maximum_ms": 0.336,
+                  "service_over_1000_ms": 0,
+                  "service_over_100_ms": 0,
+                  "service_over_5000_ms": 0,
+                  "started": 7053
+                }
+              },
+              "product": "keypoints",
+              "run": "refined_keypoints_runs/refined_keypoints_batman_kpt5_v2_canary_20260805_v005"
+            }
+          ],
+          "work_exceptions": 0,
+          "workers": 4
+        },
+        "schema_id": "crimson.keypoint_v2.long_duration_benchmark",
+        "schema_version": 1,
+        "selected_manifest_digest": "acd2d14f7bbed7a468ea0fd6262633a38f16dbf3d6ea48f915c81834c476412f",
+        "selected_run": "refined_keypoints_batman_kpt5_v2_canary_20260805_v005",
+        "status": "pass",
+        "workload_path": "/Users/jmdelahanty/gitrepos/crimson-macos/tools/fixtures/keypoint_v2_long_duration_workload_v1.json",
+        "workload_sha256": "c419afa719b4d2b5c43e3fe1a0a89fe6e095c1f27024ebc14e1dcc0f63372ce2",
+        "worktree_dirty": false
+      }
+    },
+    {
+      "position": 2,
+      "repetition": 2,
+      "ordinal_within_repetition": 0,
+      "candidate": "batman_refined_keypoints_v2",
+      "command": [
+        "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/keypoint_v2_long_duration_benchmark",
+        "--mode",
+        "refined",
+        "--raw-store",
+        "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr",
+        "--raw-run",
+        "keypoints_batman_kpt5_v2_canary_20260805_v005",
+        "--raw-digest",
+        "dd5aa05452bcb05f820a44d39795689e0981b6bf33cbb3235af584a9164d956e",
+        "--quality-store",
+        "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr",
+        "--quality-run",
+        "keypoint_quality_batman_kpt5_v2_canary_20260805_v005",
+        "--quality-digest",
+        "daee5983024d78c96bc0b8d31ef3713a97a733dc65f1260b5b69bcf61f1eaca4",
+        "--body-store",
+        "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr",
+        "--body-run",
+        "body_frame_batman_kpt5_v2_canary_20260805_v005",
+        "--body-digest",
+        "0e0c44a708afb0619dbc934029ac800ad3ed97f8acea429dd81057b66579be93",
+        "--workload",
+        "/Users/jmdelahanty/gitrepos/crimson-macos/tools/fixtures/keypoint_v2_long_duration_workload_v1.json",
+        "--repetition",
+        "2",
+        "--output",
+        "/private/tmp/crimson-batman-keypoint-v2-20260805/02_repetition_2_batman_refined_keypoints_v2.json",
+        "--refined-store",
+        "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr",
+        "--refined-run",
+        "refined_keypoints_batman_kpt5_v2_canary_20260805_v005",
+        "--refined-digest",
+        "acd2d14f7bbed7a468ea0fd6262633a38f16dbf3d6ea48f915c81834c476412f",
+        "--deep-validate-identity"
+      ],
+      "result_path": "/private/tmp/crimson-batman-keypoint-v2-20260805/02_repetition_2_batman_refined_keypoints_v2.json",
+      "stdout_path": "/private/tmp/crimson-batman-keypoint-v2-20260805/02_repetition_2_batman_refined_keypoints_v2.stdout.log",
+      "stderr_path": "/private/tmp/crimson-batman-keypoint-v2-20260805/02_repetition_2_batman_refined_keypoints_v2.stderr.log",
+      "subprocess_returncode": 0,
+      "subprocess_elapsed_ms": 742.9640000000006,
+      "timed_out": false,
+      "resumed": false,
+      "pass": true,
+      "result": {
+        "access_metrics": {
+          "frame_requests": 7464,
+          "maximum_columns_per_batch": 24,
+          "payload_read_batches": 7436,
+          "payload_read_calls": 178464,
+          "quality_payload_read_calls": 0,
+          "read_failures": 0,
+          "rows_resolved": 7436
+        },
+        "archive_open_ms": 0.051167,
+        "archives": [
+          {
+            "cache_pool_bytes": 67108864,
+            "path": "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr"
+          }
+        ],
+        "buffer_metrics": {
+          "cache_hits": 0,
+          "discarded_results": 186,
+          "failed_frames": 0,
+          "last_error": "",
+          "maximum_resolve_ms": 8.506708,
+          "missing_frames": 22,
+          "peak_cached_frames": 24,
+          "peak_pending_frames": 13,
+          "requests": 7289,
+          "resolved_frames": 7256
+        },
+        "classification": "full_duration_acceptance_process_trial",
+        "close_ms": 0.061917,
+        "configured_cache_bytes": 67108864,
+        "crimson_commit": "c485b80596dc30dd1b3d311943c3761ff6ac3921",
+        "deep_validate_identity": true,
+        "effective_deadline_miss_ratio": 0.0,
+        "first_presentation": {
+          "elapsed_ms": 8.535292,
+          "frame": 136308,
+          "logical_digest": "b14ae6e55e5d98693ae66b931928d019a1a809144d1c393a202186e2f02e7741",
+          "observations": 1,
+          "physical": {
+            "cache_evictions": 0,
+            "cache_hits": 12,
+            "cache_misses": 19,
+            "file_batch_reads": 13,
+            "file_bytes": 2398538,
+            "file_reads": 17
+          }
+        },
+        "first_presentation_readiness_ms": 353.290167,
+        "forward_traversal": {
+          "average_ms": 0.05015908885714283,
+          "deadline_ms": 100.0,
+          "elapsed_ms": 175.55681099999993,
+          "logical_digest": "c9b200c70ac72bb23652d48a02cb1e680e856a2fb3cdafe59e944a67e0f50fec",
+          "maximum_ms": 0.117084,
+          "observations": 3500,
+          "p50_ms": 0.049,
+          "p95_ms": 0.065792,
+          "page_count": 50,
+          "page_frames": 70,
+          "page_p50_ms": 3.490333,
+          "page_p95_ms": 3.834333,
+          "physical": {
+            "cache_evictions": 0,
+            "cache_hits": 98028,
+            "cache_misses": 0,
+            "file_batch_reads": 0,
+            "file_bytes": 0,
+            "file_reads": 0
+          },
+          "post_warmup_deadline_miss_ratio": 0.0,
+          "post_warmup_deadline_misses": 0,
+          "post_warmup_measured_pages": 49,
+          "requests": 3500,
+          "warmup_pages": 1
+        },
+        "frame_count": 139295,
+        "gate_failures": [],
+        "keypoint_count": 5,
+        "mode": "refined",
+        "open_metrics": {
+          "body_frame_offset_read_calls": 1,
+          "consolidated_array_declarations": 61,
+          "direct_metadata_reads": 65,
+          "exact_handle_open_ms": 1.677291,
+          "exact_handle_opens": 61,
+          "fallback_dtype_opens": 0,
+          "fallback_metadata_reads": 0,
+          "identity_validation_ms": 227.184375,
+          "metadata_ms": 108.036875,
+          "quality_offset_read_calls": 0,
+          "quality_payload_reads": 0,
+          "raw_offset_read_calls": 1,
+          "retained_offset_bytes": 3343104,
+          "root_metadata_reads": 4,
+          "selected_offset_read_calls": 1,
+          "total_ms": 336.904875
+        },
+        "peak_rss_bytes": 104579072,
+        "process_physical": {
+          "cache_evictions": 0,
+          "cache_hits": 208191,
+          "cache_misses": 115,
+          "file_batch_reads": 105,
+          "file_bytes": 32231237,
+          "file_reads": 109
+        },
+        "profile_promotion_verdict": "pending_paired_repetitions",
+        "random_process_first": {
+          "average_ms": 0.13310639843749994,
+          "elapsed_ms": 17.037618999999992,
+          "logical_digest": "a93dcf774563e985f695e008c7714a1aaeb57ed69c3cc4f07801bf51163e5b48",
+          "maximum_ms": 1.287584,
+          "observations": 119,
+          "p50_ms": 0.110666,
+          "p95_ms": 0.177125,
+          "physical": {
+            "cache_evictions": 0,
+            "cache_hits": 5655,
+            "cache_misses": 4,
+            "file_batch_reads": 4,
+            "file_bytes": 2980726,
+            "file_reads": 4
+          },
+          "requests": 128
+        },
+        "random_warm": {
+          "average_ms": 0.09318814843750002,
+          "elapsed_ms": 11.928083000000003,
+          "logical_digest": "a93dcf774563e985f695e008c7714a1aaeb57ed69c3cc4f07801bf51163e5b48",
+          "maximum_ms": 0.194209,
+          "observations": 119,
+          "p50_ms": 0.092167,
+          "p95_ms": 0.140667,
+          "physical": {
+            "cache_evictions": 0,
+            "cache_hits": 5846,
+            "cache_misses": 0,
+            "file_batch_reads": 0,
+            "file_bytes": 0,
+            "file_reads": 0
+          },
+          "requests": 128
+        },
+        "rapid_seeks": {
+          "cancelled_requests": 413,
+          "discarded_completions": 5,
+          "final_frame": 77597,
+          "final_readiness_ms": 0.357416,
+          "physical_transfer_upper_bound": {
+            "cache_evictions": 0,
+            "cache_hits": 448,
+            "cache_misses": 0,
+            "file_batch_reads": 0,
+            "file_bytes": 0,
+            "file_reads": 0
+          },
+          "requests": 32,
+          "stale_visible_frames": 0
+        },
+        "repetition": 2,
+        "repository_open_ms": 344.614958,
+        "reverse_traversal": {
+          "average_ms": 0.04793594400000002,
+          "deadline_ms": 100.0,
+          "elapsed_ms": 167.77580400000008,
+          "logical_digest": "93425fc0746e18f2afe6dc1388bd37dc8e874a9a17fe58b535bcd60b73eaf4a4",
+          "maximum_ms": 0.0915,
+          "observations": 3500,
+          "p50_ms": 0.046834,
+          "p95_ms": 0.063333,
+          "page_count": 50,
+          "page_frames": 70,
+          "page_p50_ms": 3.341292,
+          "page_p95_ms": 3.550542,
+          "physical": {
+            "cache_evictions": 0,
+            "cache_hits": 98029,
+            "cache_misses": 0,
+            "file_batch_reads": 0,
+            "file_bytes": 0,
+            "file_reads": 0
+          },
+          "post_warmup_deadline_miss_ratio": 0.0,
+          "post_warmup_deadline_misses": 0,
+          "post_warmup_measured_pages": 49,
+          "requests": 3500,
+          "warmup_pages": 1
+        },
+        "row_count": 126214,
+        "scheduler_metrics": {
+          "accepted": 10793,
+          "cancelled": 3578,
+          "completed": 7466,
+          "discarded": 188,
+          "duplicates": 83809,
+          "failed": 0,
+          "peak_active": 4,
+          "peak_active_non_current": 1,
+          "peak_active_speculative": 1,
+          "peak_pending": 13,
+          "promotions": 155,
+          "reserved_current_frame_workers": 1,
+          "submissions": 94757,
+          "timing_by_priority": {
+            "current_frame": {
+              "completed": 420,
+              "queue_average_ms": 0.006166164285714274,
+              "queue_maximum_ms": 0.042208,
+              "queue_wait_over_1000_ms": 0,
+              "queue_wait_over_100_ms": 0,
+              "queue_wait_over_5000_ms": 0,
+              "service_average_ms": 0.09442943809523806,
+              "service_maximum_ms": 8.513625,
+              "service_over_1000_ms": 0,
+              "service_over_100_ms": 0,
+              "service_over_5000_ms": 0,
+              "started": 420
+            },
+            "history": {
+              "completed": 0,
+              "queue_average_ms": 0.0,
+              "queue_maximum_ms": 0.0,
+              "queue_wait_over_1000_ms": 0,
+              "queue_wait_over_100_ms": 0,
+              "queue_wait_over_5000_ms": 0,
+              "service_average_ms": 0.0,
+              "service_maximum_ms": 0.0,
+              "service_over_1000_ms": 0,
+              "service_over_100_ms": 0,
+              "service_over_5000_ms": 0,
+              "started": 0
+            },
+            "inspection": {
+              "completed": 0,
+              "queue_average_ms": 0.0,
+              "queue_maximum_ms": 0.0,
+              "queue_wait_over_1000_ms": 0,
+              "queue_wait_over_100_ms": 0,
+              "queue_wait_over_5000_ms": 0,
+              "service_average_ms": 0.0,
+              "service_maximum_ms": 0.0,
+              "service_over_1000_ms": 0,
+              "service_over_100_ms": 0,
+              "service_over_5000_ms": 0,
+              "started": 0
+            },
+            "speculative": {
+              "completed": 7046,
+              "queue_average_ms": 0.559019852398522,
+              "queue_maximum_ms": 8.512292,
+              "queue_wait_over_1000_ms": 0,
+              "queue_wait_over_100_ms": 0,
+              "queue_wait_over_5000_ms": 0,
+              "service_average_ms": 0.04817434416690324,
+              "service_maximum_ms": 0.34975,
+              "service_over_1000_ms": 0,
+              "service_over_100_ms": 0,
+              "service_over_5000_ms": 0,
+              "started": 7046
+            },
+            "visible_window": {
+              "completed": 0,
+              "queue_average_ms": 0.0,
+              "queue_maximum_ms": 0.0,
+              "queue_wait_over_1000_ms": 0,
+              "queue_wait_over_100_ms": 0,
+              "queue_wait_over_5000_ms": 0,
+              "service_average_ms": 0.0,
+              "service_maximum_ms": 0.0,
+              "service_over_1000_ms": 0,
+              "service_over_100_ms": 0,
+              "service_over_5000_ms": 0,
+              "started": 0
+            }
+          },
+          "timing_by_source": [
+            {
+              "archive": "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr",
+              "by_priority": {
+                "current_frame": {
+                  "completed": 420,
+                  "queue_average_ms": 0.006166164285714274,
+                  "queue_maximum_ms": 0.042208,
+                  "queue_wait_over_1000_ms": 0,
+                  "queue_wait_over_100_ms": 0,
+                  "queue_wait_over_5000_ms": 0,
+                  "service_average_ms": 0.09442943809523806,
+                  "service_maximum_ms": 8.513625,
+                  "service_over_1000_ms": 0,
+                  "service_over_100_ms": 0,
+                  "service_over_5000_ms": 0,
+                  "started": 420
+                },
+                "speculative": {
+                  "completed": 7046,
+                  "queue_average_ms": 0.559019852398522,
+                  "queue_maximum_ms": 8.512292,
+                  "queue_wait_over_1000_ms": 0,
+                  "queue_wait_over_100_ms": 0,
+                  "queue_wait_over_5000_ms": 0,
+                  "service_average_ms": 0.04817434416690324,
+                  "service_maximum_ms": 0.34975,
+                  "service_over_1000_ms": 0,
+                  "service_over_100_ms": 0,
+                  "service_over_5000_ms": 0,
+                  "started": 7046
+                }
+              },
+              "product": "keypoints",
+              "run": "refined_keypoints_runs/refined_keypoints_batman_kpt5_v2_canary_20260805_v005"
+            }
+          ],
+          "work_exceptions": 0,
+          "workers": 4
+        },
+        "schema_id": "crimson.keypoint_v2.long_duration_benchmark",
+        "schema_version": 1,
+        "selected_manifest_digest": "acd2d14f7bbed7a468ea0fd6262633a38f16dbf3d6ea48f915c81834c476412f",
+        "selected_run": "refined_keypoints_batman_kpt5_v2_canary_20260805_v005",
+        "status": "pass",
+        "workload_path": "/Users/jmdelahanty/gitrepos/crimson-macos/tools/fixtures/keypoint_v2_long_duration_workload_v1.json",
+        "workload_sha256": "c419afa719b4d2b5c43e3fe1a0a89fe6e095c1f27024ebc14e1dcc0f63372ce2",
+        "worktree_dirty": false
+      }
+    },
+    {
+      "position": 3,
+      "repetition": 3,
+      "ordinal_within_repetition": 0,
+      "candidate": "batman_refined_keypoints_v2",
+      "command": [
+        "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/keypoint_v2_long_duration_benchmark",
+        "--mode",
+        "refined",
+        "--raw-store",
+        "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr",
+        "--raw-run",
+        "keypoints_batman_kpt5_v2_canary_20260805_v005",
+        "--raw-digest",
+        "dd5aa05452bcb05f820a44d39795689e0981b6bf33cbb3235af584a9164d956e",
+        "--quality-store",
+        "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr",
+        "--quality-run",
+        "keypoint_quality_batman_kpt5_v2_canary_20260805_v005",
+        "--quality-digest",
+        "daee5983024d78c96bc0b8d31ef3713a97a733dc65f1260b5b69bcf61f1eaca4",
+        "--body-store",
+        "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr",
+        "--body-run",
+        "body_frame_batman_kpt5_v2_canary_20260805_v005",
+        "--body-digest",
+        "0e0c44a708afb0619dbc934029ac800ad3ed97f8acea429dd81057b66579be93",
+        "--workload",
+        "/Users/jmdelahanty/gitrepos/crimson-macos/tools/fixtures/keypoint_v2_long_duration_workload_v1.json",
+        "--repetition",
+        "3",
+        "--output",
+        "/private/tmp/crimson-batman-keypoint-v2-20260805/03_repetition_3_batman_refined_keypoints_v2.json",
+        "--refined-store",
+        "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr",
+        "--refined-run",
+        "refined_keypoints_batman_kpt5_v2_canary_20260805_v005",
+        "--refined-digest",
+        "acd2d14f7bbed7a468ea0fd6262633a38f16dbf3d6ea48f915c81834c476412f",
+        "--deep-validate-identity"
+      ],
+      "result_path": "/private/tmp/crimson-batman-keypoint-v2-20260805/03_repetition_3_batman_refined_keypoints_v2.json",
+      "stdout_path": "/private/tmp/crimson-batman-keypoint-v2-20260805/03_repetition_3_batman_refined_keypoints_v2.stdout.log",
+      "stderr_path": "/private/tmp/crimson-batman-keypoint-v2-20260805/03_repetition_3_batman_refined_keypoints_v2.stderr.log",
+      "subprocess_returncode": 0,
+      "subprocess_elapsed_ms": 664.5706249999996,
+      "timed_out": false,
+      "resumed": false,
+      "pass": true,
+      "result": {
+        "access_metrics": {
+          "frame_requests": 7464,
+          "maximum_columns_per_batch": 24,
+          "payload_read_batches": 7408,
+          "payload_read_calls": 177792,
+          "quality_payload_read_calls": 0,
+          "read_failures": 0,
+          "rows_resolved": 7409
+        },
+        "archive_open_ms": 0.048083,
+        "archives": [
+          {
+            "cache_pool_bytes": 67108864,
+            "path": "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr"
+          }
+        ],
+        "buffer_metrics": {
+          "cache_hits": 4,
+          "discarded_results": 184,
+          "failed_frames": 0,
+          "last_error": "",
+          "maximum_resolve_ms": 35.316541,
+          "missing_frames": 47,
+          "peak_cached_frames": 24,
+          "peak_pending_frames": 13,
+          "requests": 7289,
+          "resolved_frames": 7233
+        },
+        "classification": "full_duration_acceptance_process_trial",
+        "close_ms": 0.059916,
+        "configured_cache_bytes": 67108864,
+        "crimson_commit": "c485b80596dc30dd1b3d311943c3761ff6ac3921",
+        "deep_validate_identity": true,
+        "effective_deadline_miss_ratio": 0.0,
+        "first_presentation": {
+          "elapsed_ms": 35.343208,
+          "frame": 39638,
+          "logical_digest": "4ce53168698cc5b1083410c1368daf3945ffb30f9d55f346839eea4704e61d85",
+          "observations": 1,
+          "physical": {
+            "cache_evictions": 0,
+            "cache_hits": 12,
+            "cache_misses": 19,
+            "file_batch_reads": 13,
+            "file_bytes": 2542579,
+            "file_reads": 17
+          }
+        },
+        "first_presentation_readiness_ms": 276.445458,
+        "forward_traversal": {
+          "average_ms": 0.0504716237142858,
+          "deadline_ms": 100.0,
+          "elapsed_ms": 176.6506830000003,
+          "logical_digest": "9bc6bfbe952b5c2b00a53699bee9005149b718c4cc09c63226e02cf2bfe4c249",
+          "maximum_ms": 0.109125,
+          "observations": 3494,
+          "p50_ms": 0.049125,
+          "p95_ms": 0.065625,
+          "page_count": 50,
+          "page_frames": 70,
+          "page_p50_ms": 3.513917,
+          "page_p95_ms": 3.817625,
+          "physical": {
+            "cache_evictions": 0,
+            "cache_hits": 97833,
+            "cache_misses": 0,
+            "file_batch_reads": 0,
+            "file_bytes": 0,
+            "file_reads": 0
+          },
+          "post_warmup_deadline_miss_ratio": 0.0,
+          "post_warmup_deadline_misses": 0,
+          "post_warmup_measured_pages": 49,
+          "requests": 3500,
+          "warmup_pages": 1
+        },
+        "frame_count": 139295,
+        "gate_failures": [],
+        "keypoint_count": 5,
+        "mode": "refined",
+        "open_metrics": {
+          "body_frame_offset_read_calls": 1,
+          "consolidated_array_declarations": 61,
+          "direct_metadata_reads": 65,
+          "exact_handle_open_ms": 1.56,
+          "exact_handle_opens": 61,
+          "fallback_dtype_opens": 0,
+          "fallback_metadata_reads": 0,
+          "identity_validation_ms": 162.433542,
+          "metadata_ms": 69.063416,
+          "quality_offset_read_calls": 0,
+          "quality_payload_reads": 0,
+          "raw_offset_read_calls": 1,
+          "retained_offset_bytes": 3343104,
+          "root_metadata_reads": 4,
+          "selected_offset_read_calls": 1,
+          "total_ms": 233.062875
+        },
+        "peak_rss_bytes": 104267776,
+        "process_physical": {
+          "cache_evictions": 0,
+          "cache_hits": 207407,
+          "cache_misses": 115,
+          "file_batch_reads": 105,
+          "file_bytes": 32231237,
+          "file_reads": 109
+        },
+        "profile_promotion_verdict": "pending_paired_repetitions",
+        "random_process_first": {
+          "average_ms": 0.11279815624999995,
+          "elapsed_ms": 14.438163999999993,
+          "logical_digest": "0f0a62f129abdf7ec980d7b9010b81878c15f9bd0998215b48112c561f5ef6c1",
+          "maximum_ms": 1.202791,
+          "observations": 111,
+          "p50_ms": 0.093041,
+          "p95_ms": 0.142959,
+          "physical": {
+            "cache_evictions": 0,
+            "cache_hits": 5513,
+            "cache_misses": 4,
+            "file_batch_reads": 4,
+            "file_bytes": 2836685,
+            "file_reads": 4
+          },
+          "requests": 128
+        },
+        "random_warm": {
+          "average_ms": 0.08489425781250003,
+          "elapsed_ms": 10.866465000000003,
+          "logical_digest": "0f0a62f129abdf7ec980d7b9010b81878c15f9bd0998215b48112c561f5ef6c1",
+          "maximum_ms": 0.160042,
+          "observations": 111,
+          "p50_ms": 0.087416,
+          "p95_ms": 0.127167,
+          "physical": {
+            "cache_evictions": 0,
+            "cache_hits": 5343,
+            "cache_misses": 0,
+            "file_batch_reads": 0,
+            "file_bytes": 0,
+            "file_reads": 0
+          },
+          "requests": 128
+        },
+        "rapid_seeks": {
+          "cancelled_requests": 413,
+          "discarded_completions": 7,
+          "final_frame": 93900,
+          "final_readiness_ms": 0.377,
+          "physical_transfer_upper_bound": {
+            "cache_evictions": 0,
+            "cache_hits": 521,
+            "cache_misses": 0,
+            "file_batch_reads": 0,
+            "file_bytes": 0,
+            "file_reads": 0
+          },
+          "requests": 32,
+          "stale_visible_frames": 0
+        },
+        "repetition": 3,
+        "repository_open_ms": 240.972083,
+        "reverse_traversal": {
+          "average_ms": 0.048233146857142875,
+          "deadline_ms": 100.0,
+          "elapsed_ms": 168.81601400000005,
+          "logical_digest": "20413a820d3675d673a68ee30add6168799e35590a1ac3fd6f9c352c418101a4",
+          "maximum_ms": 0.099666,
+          "observations": 3500,
+          "p50_ms": 0.047125,
+          "p95_ms": 0.063416,
+          "page_count": 50,
+          "page_frames": 70,
+          "page_p50_ms": 3.362125,
+          "page_p95_ms": 3.653375,
+          "physical": {
+            "cache_evictions": 0,
+            "cache_hits": 98029,
+            "cache_misses": 0,
+            "file_batch_reads": 0,
+            "file_bytes": 0,
+            "file_reads": 0
+          },
+          "post_warmup_deadline_miss_ratio": 0.0,
+          "post_warmup_deadline_misses": 0,
+          "post_warmup_measured_pages": 49,
+          "requests": 3500,
+          "warmup_pages": 1
+        },
+        "row_count": 126214,
+        "scheduler_metrics": {
+          "accepted": 10793,
+          "cancelled": 3573,
+          "completed": 7468,
+          "discarded": 188,
+          "duplicates": 83809,
+          "failed": 0,
+          "peak_active": 4,
+          "peak_active_non_current": 1,
+          "peak_active_speculative": 1,
+          "peak_pending": 13,
+          "promotions": 148,
+          "reserved_current_frame_workers": 1,
+          "submissions": 94750,
+          "timing_by_priority": {
+            "current_frame": {
+              "completed": 415,
+              "queue_average_ms": 0.0059217734939758975,
+              "queue_maximum_ms": 0.045667,
+              "queue_wait_over_1000_ms": 0,
+              "queue_wait_over_100_ms": 0,
+              "queue_wait_over_5000_ms": 0,
+              "service_average_ms": 0.15213253253012032,
+              "service_maximum_ms": 35.323167,
+              "service_over_1000_ms": 0,
+              "service_over_100_ms": 0,
+              "service_over_5000_ms": 0,
+              "started": 415
+            },
+            "history": {
+              "completed": 0,
+              "queue_average_ms": 0.0,
+              "queue_maximum_ms": 0.0,
+              "queue_wait_over_1000_ms": 0,
+              "queue_wait_over_100_ms": 0,
+              "queue_wait_over_5000_ms": 0,
+              "service_average_ms": 0.0,
+              "service_maximum_ms": 0.0,
+              "service_over_1000_ms": 0,
+              "service_over_100_ms": 0,
+              "service_over_5000_ms": 0,
+              "started": 0
+            },
+            "inspection": {
+              "completed": 0,
+              "queue_average_ms": 0.0,
+              "queue_maximum_ms": 0.0,
+              "queue_wait_over_1000_ms": 0,
+              "queue_wait_over_100_ms": 0,
+              "queue_wait_over_5000_ms": 0,
+              "service_average_ms": 0.0,
+              "service_maximum_ms": 0.0,
+              "service_over_1000_ms": 0,
+              "service_over_100_ms": 0,
+              "service_over_5000_ms": 0,
+              "started": 0
+            },
+            "speculative": {
+              "completed": 7053,
+              "queue_average_ms": 0.5657950340280734,
+              "queue_maximum_ms": 35.318625,
+              "queue_wait_over_1000_ms": 0,
+              "queue_wait_over_100_ms": 0,
+              "queue_wait_over_5000_ms": 0,
+              "service_average_ms": 0.04786963873528985,
+              "service_maximum_ms": 0.239042,
+              "service_over_1000_ms": 0,
+              "service_over_100_ms": 0,
+              "service_over_5000_ms": 0,
+              "started": 7053
+            },
+            "visible_window": {
+              "completed": 0,
+              "queue_average_ms": 0.0,
+              "queue_maximum_ms": 0.0,
+              "queue_wait_over_1000_ms": 0,
+              "queue_wait_over_100_ms": 0,
+              "queue_wait_over_5000_ms": 0,
+              "service_average_ms": 0.0,
+              "service_maximum_ms": 0.0,
+              "service_over_1000_ms": 0,
+              "service_over_100_ms": 0,
+              "service_over_5000_ms": 0,
+              "started": 0
+            }
+          },
+          "timing_by_source": [
+            {
+              "archive": "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr",
+              "by_priority": {
+                "current_frame": {
+                  "completed": 415,
+                  "queue_average_ms": 0.0059217734939758975,
+                  "queue_maximum_ms": 0.045667,
+                  "queue_wait_over_1000_ms": 0,
+                  "queue_wait_over_100_ms": 0,
+                  "queue_wait_over_5000_ms": 0,
+                  "service_average_ms": 0.15213253253012032,
+                  "service_maximum_ms": 35.323167,
+                  "service_over_1000_ms": 0,
+                  "service_over_100_ms": 0,
+                  "service_over_5000_ms": 0,
+                  "started": 415
+                },
+                "speculative": {
+                  "completed": 7053,
+                  "queue_average_ms": 0.5657950340280734,
+                  "queue_maximum_ms": 35.318625,
+                  "queue_wait_over_1000_ms": 0,
+                  "queue_wait_over_100_ms": 0,
+                  "queue_wait_over_5000_ms": 0,
+                  "service_average_ms": 0.04786963873528985,
+                  "service_maximum_ms": 0.239042,
+                  "service_over_1000_ms": 0,
+                  "service_over_100_ms": 0,
+                  "service_over_5000_ms": 0,
+                  "started": 7053
+                }
+              },
+              "product": "keypoints",
+              "run": "refined_keypoints_runs/refined_keypoints_batman_kpt5_v2_canary_20260805_v005"
+            }
+          ],
+          "work_exceptions": 0,
+          "workers": 4
+        },
+        "schema_id": "crimson.keypoint_v2.long_duration_benchmark",
+        "schema_version": 1,
+        "selected_manifest_digest": "acd2d14f7bbed7a468ea0fd6262633a38f16dbf3d6ea48f915c81834c476412f",
+        "selected_run": "refined_keypoints_batman_kpt5_v2_canary_20260805_v005",
+        "status": "pass",
+        "workload_path": "/Users/jmdelahanty/gitrepos/crimson-macos/tools/fixtures/keypoint_v2_long_duration_workload_v1.json",
+        "workload_sha256": "c419afa719b4d2b5c43e3fe1a0a89fe6e095c1f27024ebc14e1dcc0f63372ce2",
+        "worktree_dirty": false
+      }
+    },
+    {
+      "position": 4,
+      "repetition": 4,
+      "ordinal_within_repetition": 0,
+      "candidate": "batman_refined_keypoints_v2",
+      "command": [
+        "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/keypoint_v2_long_duration_benchmark",
+        "--mode",
+        "refined",
+        "--raw-store",
+        "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr",
+        "--raw-run",
+        "keypoints_batman_kpt5_v2_canary_20260805_v005",
+        "--raw-digest",
+        "dd5aa05452bcb05f820a44d39795689e0981b6bf33cbb3235af584a9164d956e",
+        "--quality-store",
+        "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr",
+        "--quality-run",
+        "keypoint_quality_batman_kpt5_v2_canary_20260805_v005",
+        "--quality-digest",
+        "daee5983024d78c96bc0b8d31ef3713a97a733dc65f1260b5b69bcf61f1eaca4",
+        "--body-store",
+        "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr",
+        "--body-run",
+        "body_frame_batman_kpt5_v2_canary_20260805_v005",
+        "--body-digest",
+        "0e0c44a708afb0619dbc934029ac800ad3ed97f8acea429dd81057b66579be93",
+        "--workload",
+        "/Users/jmdelahanty/gitrepos/crimson-macos/tools/fixtures/keypoint_v2_long_duration_workload_v1.json",
+        "--repetition",
+        "4",
+        "--output",
+        "/private/tmp/crimson-batman-keypoint-v2-20260805/04_repetition_4_batman_refined_keypoints_v2.json",
+        "--refined-store",
+        "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr",
+        "--refined-run",
+        "refined_keypoints_batman_kpt5_v2_canary_20260805_v005",
+        "--refined-digest",
+        "acd2d14f7bbed7a468ea0fd6262633a38f16dbf3d6ea48f915c81834c476412f",
+        "--deep-validate-identity"
+      ],
+      "result_path": "/private/tmp/crimson-batman-keypoint-v2-20260805/04_repetition_4_batman_refined_keypoints_v2.json",
+      "stdout_path": "/private/tmp/crimson-batman-keypoint-v2-20260805/04_repetition_4_batman_refined_keypoints_v2.stdout.log",
+      "stderr_path": "/private/tmp/crimson-batman-keypoint-v2-20260805/04_repetition_4_batman_refined_keypoints_v2.stderr.log",
+      "subprocess_returncode": 0,
+      "subprocess_elapsed_ms": 620.9506249999998,
+      "timed_out": false,
+      "resumed": false,
+      "pass": true,
+      "result": {
+        "access_metrics": {
+          "frame_requests": 7471,
+          "maximum_columns_per_batch": 24,
+          "payload_read_batches": 7349,
+          "payload_read_calls": 176376,
+          "quality_payload_read_calls": 0,
+          "read_failures": 0,
+          "rows_resolved": 7349
+        },
+        "archive_open_ms": 0.048417,
+        "archives": [
+          {
+            "cache_pool_bytes": 67108864,
+            "path": "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr"
+          }
+        ],
+        "buffer_metrics": {
+          "cache_hits": 37,
+          "discarded_results": 192,
+          "failed_frames": 0,
+          "last_error": "",
+          "maximum_resolve_ms": 8.382125,
+          "missing_frames": 117,
+          "peak_cached_frames": 24,
+          "peak_pending_frames": 13,
+          "requests": 7289,
+          "resolved_frames": 7162
+        },
+        "classification": "full_duration_acceptance_process_trial",
+        "close_ms": 0.054666,
+        "configured_cache_bytes": 67108864,
+        "crimson_commit": "c485b80596dc30dd1b3d311943c3761ff6ac3921",
+        "deep_validate_identity": true,
+        "effective_deadline_miss_ratio": 0.0,
+        "first_presentation": {
+          "elapsed_ms": 8.409375,
+          "frame": 76381,
+          "logical_digest": "6ec839814623d44935a8edf5804e8cb130dfa46b448aed74f954c600b426a6dd",
+          "observations": 1,
+          "physical": {
+            "cache_evictions": 0,
+            "cache_hits": 13,
+            "cache_misses": 19,
+            "file_batch_reads": 13,
+            "file_bytes": 2542579,
+            "file_reads": 17
+          }
+        },
+        "first_presentation_readiness_ms": 219.2285,
+        "forward_traversal": {
+          "average_ms": 0.051875061714285756,
+          "deadline_ms": 100.0,
+          "elapsed_ms": 181.56271600000014,
+          "logical_digest": "47491c6782b7cdb850e6c43e4004b213173de9acb1bb4335ef810ed94ac3efa5",
+          "maximum_ms": 0.123458,
+          "observations": 3405,
+          "p50_ms": 0.050208,
+          "p95_ms": 0.072875,
+          "page_count": 50,
+          "page_frames": 70,
+          "page_p50_ms": 3.539625,
+          "page_p95_ms": 4.362917,
+          "physical": {
+            "cache_evictions": 0,
+            "cache_hits": 95368,
+            "cache_misses": 0,
+            "file_batch_reads": 0,
+            "file_bytes": 0,
+            "file_reads": 0
+          },
+          "post_warmup_deadline_miss_ratio": 0.0,
+          "post_warmup_deadline_misses": 0,
+          "post_warmup_measured_pages": 49,
+          "requests": 3500,
+          "warmup_pages": 1
+        },
+        "frame_count": 139295,
+        "gate_failures": [],
+        "keypoint_count": 5,
+        "mode": "refined",
+        "open_metrics": {
+          "body_frame_offset_read_calls": 1,
+          "consolidated_array_declarations": 61,
+          "direct_metadata_reads": 65,
+          "exact_handle_open_ms": 1.533708,
+          "exact_handle_opens": 61,
+          "fallback_dtype_opens": 0,
+          "fallback_metadata_reads": 0,
+          "identity_validation_ms": 137.660292,
+          "metadata_ms": 63.529542,
+          "quality_offset_read_calls": 0,
+          "quality_payload_reads": 0,
+          "raw_offset_read_calls": 1,
+          "retained_offset_bytes": 3343104,
+          "root_metadata_reads": 4,
+          "selected_offset_read_calls": 1,
+          "total_ms": 202.728167
+        },
+        "peak_rss_bytes": 104284160,
+        "process_physical": {
+          "cache_evictions": 0,
+          "cache_hits": 205755,
+          "cache_misses": 115,
+          "file_batch_reads": 105,
+          "file_bytes": 32231237,
+          "file_reads": 109
+        },
+        "profile_promotion_verdict": "pending_paired_repetitions",
+        "random_process_first": {
+          "average_ms": 0.12089377343749996,
+          "elapsed_ms": 15.474402999999995,
+          "logical_digest": "f0b17e4831c540fdaff7da07a83479125921457000451b98a7cc614117baa360",
+          "maximum_ms": 1.268167,
+          "observations": 119,
+          "p50_ms": 0.098125,
+          "p95_ms": 0.154,
+          "physical": {
+            "cache_evictions": 0,
+            "cache_hits": 5652,
+            "cache_misses": 4,
+            "file_batch_reads": 4,
+            "file_bytes": 2836685,
+            "file_reads": 4
+          },
+          "requests": 128
+        },
+        "random_warm": {
+          "average_ms": 0.09200386718750002,
+          "elapsed_ms": 11.776495000000002,
+          "logical_digest": "f0b17e4831c540fdaff7da07a83479125921457000451b98a7cc614117baa360",
+          "maximum_ms": 0.169125,
+          "observations": 119,
+          "p50_ms": 0.092791,
+          "p95_ms": 0.136625,
+          "physical": {
+            "cache_evictions": 0,
+            "cache_hits": 5851,
+            "cache_misses": 0,
+            "file_batch_reads": 0,
+            "file_bytes": 0,
+            "file_reads": 0
+          },
+          "requests": 128
+        },
+        "rapid_seeks": {
+          "cancelled_requests": 412,
+          "discarded_completions": 13,
+          "final_frame": 21066,
+          "final_readiness_ms": 0.62425,
+          "physical_transfer_upper_bound": {
+            "cache_evictions": 0,
+            "cache_hits": 700,
+            "cache_misses": 0,
+            "file_batch_reads": 0,
+            "file_bytes": 0,
+            "file_reads": 0
+          },
+          "requests": 32,
+          "stale_visible_frames": 0
+        },
+        "repetition": 4,
+        "repository_open_ms": 210.681416,
+        "reverse_traversal": {
+          "average_ms": 0.050140587714285645,
+          "deadline_ms": 100.0,
+          "elapsed_ms": 175.49205699999976,
+          "logical_digest": "5417653da687cdbfeedd76fd7439a208b56c6add520777d2f4177acef2414792",
+          "maximum_ms": 0.098083,
+          "observations": 3499,
+          "p50_ms": 0.048125,
+          "p95_ms": 0.068792,
+          "page_count": 50,
+          "page_frames": 70,
+          "page_p50_ms": 3.447,
+          "page_p95_ms": 4.037292,
+          "physical": {
+            "cache_evictions": 0,
+            "cache_hits": 98003,
+            "cache_misses": 0,
+            "file_batch_reads": 0,
+            "file_bytes": 0,
+            "file_reads": 0
+          },
+          "post_warmup_deadline_miss_ratio": 0.0,
+          "post_warmup_deadline_misses": 0,
+          "post_warmup_measured_pages": 49,
+          "requests": 3500,
+          "warmup_pages": 1
+        },
+        "row_count": 126214,
+        "scheduler_metrics": {
+          "accepted": 10793,
+          "cancelled": 3550,
+          "completed": 7473,
+          "discarded": 195,
+          "duplicates": 83688,
+          "failed": 0,
+          "peak_active": 4,
+          "peak_active_non_current": 1,
+          "peak_active_speculative": 1,
+          "peak_pending": 13,
+          "promotions": 172,
+          "reserved_current_frame_workers": 1,
+          "submissions": 94653,
+          "timing_by_priority": {
+            "current_frame": {
+              "completed": 445,
+              "queue_average_ms": 0.006167411235955055,
+              "queue_maximum_ms": 0.035666,
+              "queue_wait_over_1000_ms": 0,
+              "queue_wait_over_100_ms": 0,
+              "queue_wait_over_5000_ms": 0,
+              "service_average_ms": 0.09048811685393256,
+              "service_maximum_ms": 8.389542,
+              "service_over_1000_ms": 0,
+              "service_over_100_ms": 0,
+              "service_over_5000_ms": 0,
+              "started": 445
+            },
+            "history": {
+              "completed": 0,
+              "queue_average_ms": 0.0,
+              "queue_maximum_ms": 0.0,
+              "queue_wait_over_1000_ms": 0,
+              "queue_wait_over_100_ms": 0,
+              "queue_wait_over_5000_ms": 0,
+              "service_average_ms": 0.0,
+              "service_maximum_ms": 0.0,
+              "service_over_1000_ms": 0,
+              "service_over_100_ms": 0,
+              "service_over_5000_ms": 0,
+              "started": 0
+            },
+            "inspection": {
+              "completed": 0,
+              "queue_average_ms": 0.0,
+              "queue_maximum_ms": 0.0,
+              "queue_wait_over_1000_ms": 0,
+              "queue_wait_over_100_ms": 0,
+              "queue_wait_over_5000_ms": 0,
+              "service_average_ms": 0.0,
+              "service_maximum_ms": 0.0,
+              "service_over_1000_ms": 0,
+              "service_over_100_ms": 0,
+              "service_over_5000_ms": 0,
+              "started": 0
+            },
+            "speculative": {
+              "completed": 7028,
+              "queue_average_ms": 0.578962785145133,
+              "queue_maximum_ms": 8.392292,
+              "queue_wait_over_1000_ms": 0,
+              "queue_wait_over_100_ms": 0,
+              "queue_wait_over_5000_ms": 0,
+              "service_average_ms": 0.04966771357427422,
+              "service_maximum_ms": 0.182541,
+              "service_over_1000_ms": 0,
+              "service_over_100_ms": 0,
+              "service_over_5000_ms": 0,
+              "started": 7028
+            },
+            "visible_window": {
+              "completed": 0,
+              "queue_average_ms": 0.0,
+              "queue_maximum_ms": 0.0,
+              "queue_wait_over_1000_ms": 0,
+              "queue_wait_over_100_ms": 0,
+              "queue_wait_over_5000_ms": 0,
+              "service_average_ms": 0.0,
+              "service_maximum_ms": 0.0,
+              "service_over_1000_ms": 0,
+              "service_over_100_ms": 0,
+              "service_over_5000_ms": 0,
+              "started": 0
+            }
+          },
+          "timing_by_source": [
+            {
+              "archive": "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr",
+              "by_priority": {
+                "current_frame": {
+                  "completed": 445,
+                  "queue_average_ms": 0.006167411235955055,
+                  "queue_maximum_ms": 0.035666,
+                  "queue_wait_over_1000_ms": 0,
+                  "queue_wait_over_100_ms": 0,
+                  "queue_wait_over_5000_ms": 0,
+                  "service_average_ms": 0.09048811685393256,
+                  "service_maximum_ms": 8.389542,
+                  "service_over_1000_ms": 0,
+                  "service_over_100_ms": 0,
+                  "service_over_5000_ms": 0,
+                  "started": 445
+                },
+                "speculative": {
+                  "completed": 7028,
+                  "queue_average_ms": 0.578962785145133,
+                  "queue_maximum_ms": 8.392292,
+                  "queue_wait_over_1000_ms": 0,
+                  "queue_wait_over_100_ms": 0,
+                  "queue_wait_over_5000_ms": 0,
+                  "service_average_ms": 0.04966771357427422,
+                  "service_maximum_ms": 0.182541,
+                  "service_over_1000_ms": 0,
+                  "service_over_100_ms": 0,
+                  "service_over_5000_ms": 0,
+                  "started": 7028
+                }
+              },
+              "product": "keypoints",
+              "run": "refined_keypoints_runs/refined_keypoints_batman_kpt5_v2_canary_20260805_v005"
+            }
+          ],
+          "work_exceptions": 0,
+          "workers": 4
+        },
+        "schema_id": "crimson.keypoint_v2.long_duration_benchmark",
+        "schema_version": 1,
+        "selected_manifest_digest": "acd2d14f7bbed7a468ea0fd6262633a38f16dbf3d6ea48f915c81834c476412f",
+        "selected_run": "refined_keypoints_batman_kpt5_v2_canary_20260805_v005",
+        "status": "pass",
+        "workload_path": "/Users/jmdelahanty/gitrepos/crimson-macos/tools/fixtures/keypoint_v2_long_duration_workload_v1.json",
+        "workload_sha256": "c419afa719b4d2b5c43e3fe1a0a89fe6e095c1f27024ebc14e1dcc0f63372ce2",
+        "worktree_dirty": false
+      }
+    }
+  ],
+  "candidate_summaries": {
+    "batman_refined_keypoints_v2": {
+      "trial_count": 5,
+      "passed_trial_count": 5,
+      "all_trials_passed": true,
+      "metrics": {
+        "archive_open_ms": {
+          "values": [
+            5.486458,
+            0.048583,
+            0.051167,
+            0.048083,
+            0.048417
+          ],
+          "minimum": 0.048083,
+          "median": 0.048583,
+          "p95_nearest_rank": 5.486458,
+          "maximum": 5.486458
+        },
+        "repository_open_ms": {
+          "values": [
+            3810.898625,
+            810.609583,
+            344.614958,
+            240.972083,
+            210.681416
+          ],
+          "minimum": 210.681416,
+          "median": 344.614958,
+          "p95_nearest_rank": 3810.898625,
+          "maximum": 3810.898625
+        },
+        "first_presentation_readiness_ms": {
+          "values": [
+            3984.05025,
+            819.304375,
+            353.290167,
+            276.445458,
+            219.2285
+          ],
+          "minimum": 219.2285,
+          "median": 353.290167,
+          "p95_nearest_rank": 3984.05025,
+          "maximum": 3984.05025
+        },
+        "first_presentation.elapsed_ms": {
+          "values": [
+            167.468291,
+            8.540625,
+            8.535292,
+            35.343208,
+            8.409375
+          ],
+          "minimum": 8.409375,
+          "median": 8.540625,
+          "p95_nearest_rank": 167.468291,
+          "maximum": 167.468291
+        },
+        "first_presentation.physical.file_bytes": {
+          "values": [
+            2653803.0,
+            2653803.0,
+            2398538.0,
+            2542579.0,
+            2542579.0
+          ],
+          "minimum": 2398538.0,
+          "median": 2542579.0,
+          "p95_nearest_rank": 2653803.0,
+          "maximum": 2653803.0
+        },
+        "random_process_first.p95_ms": {
+          "values": [
+            0.284916,
+            0.157,
+            0.177125,
+            0.142959,
+            0.154
+          ],
+          "minimum": 0.142959,
+          "median": 0.157,
+          "p95_nearest_rank": 0.284916,
+          "maximum": 0.284916
+        },
+        "random_process_first.physical.file_bytes": {
+          "values": [
+            2725461.0,
+            2725461.0,
+            2980726.0,
+            2836685.0,
+            2836685.0
+          ],
+          "minimum": 2725461.0,
+          "median": 2836685.0,
+          "p95_nearest_rank": 2980726.0,
+          "maximum": 2980726.0
+        },
+        "random_warm.p95_ms": {
+          "values": [
+            0.164416,
+            0.129166,
+            0.140667,
+            0.127167,
+            0.136625
+          ],
+          "minimum": 0.127167,
+          "median": 0.136625,
+          "p95_nearest_rank": 0.164416,
+          "maximum": 0.164416
+        },
+        "random_warm.physical.file_bytes": {
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "minimum": 0.0,
+          "median": 0.0,
+          "p95_nearest_rank": 0.0,
+          "maximum": 0.0
+        },
+        "forward_traversal.page_p95_ms": {
+          "values": [
+            4.525458,
+            4.607958,
+            3.834333,
+            3.817625,
+            4.362917
+          ],
+          "minimum": 3.817625,
+          "median": 4.362917,
+          "p95_nearest_rank": 4.607958,
+          "maximum": 4.607958
+        },
+        "forward_traversal.post_warmup_deadline_miss_ratio": {
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "minimum": 0.0,
+          "median": 0.0,
+          "p95_nearest_rank": 0.0,
+          "maximum": 0.0
+        },
+        "forward_traversal.physical.file_bytes": {
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "minimum": 0.0,
+          "median": 0.0,
+          "p95_nearest_rank": 0.0,
+          "maximum": 0.0
+        },
+        "reverse_traversal.page_p95_ms": {
+          "values": [
+            3.530459,
+            3.6725,
+            3.550542,
+            3.653375,
+            4.037292
+          ],
+          "minimum": 3.530459,
+          "median": 3.653375,
+          "p95_nearest_rank": 4.037292,
+          "maximum": 4.037292
+        },
+        "reverse_traversal.post_warmup_deadline_miss_ratio": {
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "minimum": 0.0,
+          "median": 0.0,
+          "p95_nearest_rank": 0.0,
+          "maximum": 0.0
+        },
+        "reverse_traversal.physical.file_bytes": {
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "minimum": 0.0,
+          "median": 0.0,
+          "p95_nearest_rank": 0.0,
+          "maximum": 0.0
+        },
+        "rapid_seeks.final_readiness_ms": {
+          "values": [
+            0.428333,
+            0.29525,
+            0.357416,
+            0.377,
+            0.62425
+          ],
+          "minimum": 0.29525,
+          "median": 0.377,
+          "p95_nearest_rank": 0.62425,
+          "maximum": 0.62425
+        },
+        "rapid_seeks.stale_visible_frames": {
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "minimum": 0.0,
+          "median": 0.0,
+          "p95_nearest_rank": 0.0,
+          "maximum": 0.0
+        },
+        "rapid_seeks.physical_transfer_upper_bound.file_bytes": {
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "minimum": 0.0,
+          "median": 0.0,
+          "p95_nearest_rank": 0.0,
+          "maximum": 0.0
+        },
+        "scheduler_metrics.timing_by_priority.current_frame.queue_maximum_ms": {
+          "values": [
+            0.145125,
+            0.044416,
+            0.042208,
+            0.045667,
+            0.035666
+          ],
+          "minimum": 0.035666,
+          "median": 0.044416,
+          "p95_nearest_rank": 0.145125,
+          "maximum": 0.145125
+        },
+        "scheduler_metrics.timing_by_priority.current_frame.service_maximum_ms": {
+          "values": [
+            167.388834,
+            8.515417,
+            8.513625,
+            35.323167,
+            8.389542
+          ],
+          "minimum": 8.389542,
+          "median": 8.515417,
+          "p95_nearest_rank": 167.388834,
+          "maximum": 167.388834
+        },
+        "open_metrics.retained_offset_bytes": {
+          "values": [
+            3343104.0,
+            3343104.0,
+            3343104.0,
+            3343104.0,
+            3343104.0
+          ],
+          "minimum": 3343104.0,
+          "median": 3343104.0,
+          "p95_nearest_rank": 3343104.0,
+          "maximum": 3343104.0
+        },
+        "open_metrics.quality_payload_reads": {
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "minimum": 0.0,
+          "median": 0.0,
+          "p95_nearest_rank": 0.0,
+          "maximum": 0.0
+        },
+        "access_metrics.quality_payload_read_calls": {
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "minimum": 0.0,
+          "median": 0.0,
+          "p95_nearest_rank": 0.0,
+          "maximum": 0.0
+        },
+        "access_metrics.read_failures": {
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "minimum": 0.0,
+          "median": 0.0,
+          "p95_nearest_rank": 0.0,
+          "maximum": 0.0
+        },
+        "configured_cache_bytes": {
+          "values": [
+            67108864.0,
+            67108864.0,
+            67108864.0,
+            67108864.0,
+            67108864.0
+          ],
+          "minimum": 67108864.0,
+          "median": 67108864.0,
+          "p95_nearest_rank": 67108864.0,
+          "maximum": 67108864.0
+        },
+        "process_physical.file_reads": {
+          "values": [
+            109.0,
+            109.0,
+            109.0,
+            109.0,
+            109.0
+          ],
+          "minimum": 109.0,
+          "median": 109.0,
+          "p95_nearest_rank": 109.0,
+          "maximum": 109.0
+        },
+        "process_physical.file_bytes": {
+          "values": [
+            32231237.0,
+            32231237.0,
+            32231237.0,
+            32231237.0,
+            32231237.0
+          ],
+          "minimum": 32231237.0,
+          "median": 32231237.0,
+          "p95_nearest_rank": 32231237.0,
+          "maximum": 32231237.0
+        },
+        "process_physical.cache_hits": {
+          "values": [
+            207995.0,
+            207575.0,
+            208191.0,
+            207407.0,
+            205755.0
+          ],
+          "minimum": 205755.0,
+          "median": 207575.0,
+          "p95_nearest_rank": 208191.0,
+          "maximum": 208191.0
+        },
+        "process_physical.cache_misses": {
+          "values": [
+            115.0,
+            115.0,
+            115.0,
+            115.0,
+            115.0
+          ],
+          "minimum": 115.0,
+          "median": 115.0,
+          "p95_nearest_rank": 115.0,
+          "maximum": 115.0
+        },
+        "process_physical.cache_evictions": {
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "minimum": 0.0,
+          "median": 0.0,
+          "p95_nearest_rank": 0.0,
+          "maximum": 0.0
+        },
+        "peak_rss_bytes": {
+          "values": [
+            104595456.0,
+            104595456.0,
+            104579072.0,
+            104267776.0,
+            104284160.0
+          ],
+          "minimum": 104267776.0,
+          "median": 104579072.0,
+          "p95_nearest_rank": 104595456.0,
+          "maximum": 104595456.0
+        },
+        "close_ms": {
+          "values": [
+            0.059292,
+            0.058625,
+            0.061917,
+            0.059916,
+            0.054666
+          ],
+          "minimum": 0.054666,
+          "median": 0.059292,
+          "p95_nearest_rank": 0.061917,
+          "maximum": 0.061917
+        }
+      },
+      "crimson_commits": [
+        "c485b80596dc30dd1b3d311943c3761ff6ac3921"
+      ],
+      "workload_sha256": [
+        "c419afa719b4d2b5c43e3fe1a0a89fe6e095c1f27024ebc14e1dcc0f63372ce2"
+      ],
+      "selected_manifest_digests": [
+        "acd2d14f7bbed7a468ea0fd6262633a38f16dbf3d6ea48f915c81834c476412f"
+      ]
+    }
+  },
+  "comparisons": [],
+  "all_trials_passed": true,
+  "comparison_trials_complete": true,
+  "comparison_gates_valid": true
+}

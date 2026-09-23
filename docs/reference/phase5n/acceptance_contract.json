@@ -1,0 +1,67 @@
+{
+  "schema": "crimson.phase5n.stimulus-overlay-acceptance-contract.v1",
+  "state": "stimulus-overlay",
+  "frame": 1024,
+  "stem": "stimulus_overlay_exact_f001024_1920x1080",
+  "logical_size": {
+    "width": 1920,
+    "height": 1080
+  },
+  "expected_descriptor": {
+    "run_name": "stimulus_external_ipc_20260616_01",
+    "frame_count": 140035,
+    "event_count": 984,
+    "step_count": 1
+  },
+  "expected_scene": {
+    "primitive_count": 1,
+    "text_count": 1,
+    "event_box": {
+      "x": 12.0,
+      "y": 12.0,
+      "width": 254.0,
+      "height": 68.0
+    },
+    "step_box": {
+      "x": 0.0,
+      "y": 0.0,
+      "width": 0.0,
+      "height": 0.0
+    },
+    "required_text": "STEP_START - Chaser\nCHASER_PRE_PERIOD_START - Chaser\nCHASER_AT_PRE_POSITION - Chaser\nCHASER_PRESENTATION_START - Chaser",
+    "layer_order": [
+      "event_panel",
+      "event_text"
+    ]
+  },
+  "tolerances": {
+    "source_geometry_px": 0.25,
+    "scientific_value": 0.000000001,
+    "raster_search_radius_px": 2,
+    "minimum_border_coverage": 0.65,
+    "minimum_cross_platform_border_coverage": 0.80,
+    "minimum_text_pixels": 80
+  },
+  "masks": [
+    {
+      "id": "font-raster",
+      "scope": "event annotation glyph shape",
+      "reason": "Text content, order, color, and scene-relative anchor are compared from the shared scene marker because OpenGL and Metal font rasterization differs. Each capture must still contain the expected light-blue text raster inside the panel."
+    },
+    {
+      "id": "translucent-panel-fill",
+      "scope": "event panel interior channel values",
+      "reason": "The production camera is fitted into different viewport shapes, so the translucent black fill blends over different source pixels. Exact fill and stroke color semantics are compared from the canonical scene; the cyan border enforces raster geometry and visible color-family checks."
+    },
+    {
+      "id": "step-direction-production-raster",
+      "scope": "production frame 1024",
+      "reason": "The selected production run has a CHASER step rather than a moving-grating step. Direction-panel and arrow semantics are thresholded by portable scene tests and by the offscreen Metal raster fixture."
+    }
+  ],
+  "required_threshold_fixtures": [
+    "stimulus_camera_overlay_scene_tests",
+    "stimulus_context_timeline_legacy_probe",
+    "apple_read_only_overlay_metal_tests"
+  ]
+}

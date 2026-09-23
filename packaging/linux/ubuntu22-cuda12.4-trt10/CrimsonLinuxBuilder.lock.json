@@ -1,0 +1,20 @@
+{
+  "schema_id": "crimson_linux_builder_lock_v1",
+  "builder_id": "ubuntu22-cuda12.4-tensorrt10-opencv4.10",
+  "validated_at_utc": "2026-07-31T13:41:43Z",
+  "builder_sif_sha256": "d14bb0302ad24fa33b8e2c8713323e681fcd52a900cad7f6e66330ecb5b4c62a",
+  "base_image": "nvcr.io/nvidia/tensorrt:24.05-py3",
+  "base_sif_sha256": "61180ade1d8e830ac3a73cc8360b12f61a82215c6ac51a2a6352c1bf39b0af9e",
+  "ubuntu_version": "22.04.4",
+  "glibc_version": "2.35",
+  "cuda_version": "12.4",
+  "tensorrt_version": "10.0.1.6",
+  "cmake_version": "3.30.5",
+  "cmake_archive_sha256": "f747d9b23e1a252a8beafb4ed2bc2ddf78cff7f04a8e4de19f4ff88e9b51dc9d",
+  "opencv_version": "4.10.0",
+  "opencv_commit": "71d3237a093b60a27601c20e9ee6c3e52154e8b1",
+  "opencv_contrib_commit": "1ed3dd2c53888e3289afdb22ec4e9ebbff3dba87",
+  "cuda_architectures": [80, 86],
+  "fast_math": false,
+  "artifact_location_policy": "Store the SIF outside Git and verify its sibling .sha256 before every release build."
+}

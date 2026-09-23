@@ -1,0 +1,19 @@
+{
+  "schema": "crimson.phase5m.polar-capture-set.v1",
+  "captured_at": "2026-07-18T16:35:59-0400",
+  "runtime": {
+    "platform": "macos",
+    "executable": "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/Crimson.app/Contents/MacOS/Crimson",
+    "executable_sha256": "8c4cc4b3ada9290245281fddc1b73aa6decbd608efa8f3045b7077c9725004ca"
+  },
+  "inputs": {
+    "video": "/Volumes/johnsonlab/jeremy/recordings/2026-06-14T21-12-08Z_arena_1_GoodCopBadCop/cams/Cam2010093_2026-06-14T21-12-08Z_arena_1.mp4",
+    "zarr": "/Volumes/johnsonlab/jeremy/recordings/2026-06-14T21-12-08Z_arena_1_GoodCopBadCop/zarr/2026-06-14T21-12-08Z_arena_1_GoodCopBadCop_analysis.zarr"
+  },
+  "logical_size": "1920x1080",
+  "capture": {
+    "state": "polar",
+    "frame": 1024,
+    "stem": "polar_exact_f001024_1920x1080"
+  }
+}

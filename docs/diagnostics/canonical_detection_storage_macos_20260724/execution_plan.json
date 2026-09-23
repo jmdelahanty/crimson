@@ -1,0 +1,122 @@
+[
+  {
+    "order": 0,
+    "repetition": "000",
+    "cache_bytes": 0,
+    "layout": "regular"
+  },
+  {
+    "order": 1,
+    "repetition": "000",
+    "cache_bytes": 0,
+    "layout": "hybrid"
+  },
+  {
+    "order": 2,
+    "repetition": "000",
+    "cache_bytes": 134217728,
+    "layout": "hybrid"
+  },
+  {
+    "order": 3,
+    "repetition": "000",
+    "cache_bytes": 134217728,
+    "layout": "regular"
+  },
+  {
+    "order": 4,
+    "repetition": "001",
+    "cache_bytes": 134217728,
+    "layout": "hybrid"
+  },
+  {
+    "order": 5,
+    "repetition": "001",
+    "cache_bytes": 134217728,
+    "layout": "regular"
+  },
+  {
+    "order": 6,
+    "repetition": "001",
+    "cache_bytes": 0,
+    "layout": "regular"
+  },
+  {
+    "order": 7,
+    "repetition": "001",
+    "cache_bytes": 0,
+    "layout": "hybrid"
+  },
+  {
+    "order": 8,
+    "repetition": "002",
+    "cache_bytes": 0,
+    "layout": "regular"
+  },
+  {
+    "order": 9,
+    "repetition": "002",
+    "cache_bytes": 0,
+    "layout": "hybrid"
+  },
+  {
+    "order": 10,
+    "repetition": "002",
+    "cache_bytes": 134217728,
+    "layout": "hybrid"
+  },
+  {
+    "order": 11,
+    "repetition": "002",
+    "cache_bytes": 134217728,
+    "layout": "regular"
+  },
+  {
+    "order": 12,
+    "repetition": "003",
+    "cache_bytes": 134217728,
+    "layout": "hybrid"
+  },
+  {
+    "order": 13,
+    "repetition": "003",
+    "cache_bytes": 134217728,
+    "layout": "regular"
+  },
+  {
+    "order": 14,
+    "repetition": "003",
+    "cache_bytes": 0,
+    "layout": "regular"
+  },
+  {
+    "order": 15,
+    "repetition": "003",
+    "cache_bytes": 0,
+    "layout": "hybrid"
+  },
+  {
+    "order": 16,
+    "repetition": "004",
+    "cache_bytes": 0,
+    "layout": "regular"
+  },
+  {
+    "order": 17,
+    "repetition": "004",
+    "cache_bytes": 0,
+    "layout": "hybrid"
+  },
+  {
+    "order": 18,
+    "repetition": "004",
+    "cache_bytes": 134217728,
+    "layout": "hybrid"
+  },
+  {
+    "order": 19,
+    "repetition": "004",
+    "cache_bytes": 134217728,
+    "layout": "regular"
+  }
+]

@@ -1,0 +1,354 @@
+# Crimson Threading Architecture Notes
+
+Date anchored: 2026-06-21. Updated: 2026-07-12.
+
+## Purpose
+
+This note captures the current Crimson threading shape and the main risks that
+showed up while investigating refined subject-mask RLE playback performance.
+
+The short version: Crimson's threading model is pragmatic and currently fast
+enough, but several synchronization boundaries are implicit. Before adding more
+asynchronous loaders or render-side background work, those boundaries should be
+made explicit.
+
+## Current Shape
+
+Crimson is not built around one general task scheduler. It has a handful of
+specialized worker paths coordinated by the GUI/main thread.
+
+The main GUI thread owns:
+
+- the GLFW/ImGui frame loop in `src/red.cpp`
+- OpenGL presentation
+- camera view composition
+- most playback state transitions
+- UI window construction and perf logging
+
+Long-lived media workers include:
+
+- one decoder thread per camera video, started from `src/red.cpp`
+- optional image-loader threads for image-sequence inputs
+- a stimulus playback decoder thread when stimulus media is loaded
+
+Short-lived or ad hoc background work includes:
+
+- an owned refined mask chunk prefetch worker in
+  `ZarrDetectionLoader`
+- `std::async` work for some write workflows
+- YOLO worker threads on legacy detection paths
+
+The current architecture is closer to:
+
+```text
+GUI/main thread
+  -> owns frame timing, UI, rendering, playback decisions
+  -> reads latest decoder state
+  -> marks displayed ring-buffer slots writable again
+
+decoder worker threads
+  -> demux/decode media
+  -> publish frames into per-camera ring buffers
+  -> update latest-decoded atomics
+
+Zarr/mask code
+  -> mostly synchronous reads on demand
+  -> refined mask chunks can be prefetched by a bounded loader-owned worker
+```
+
+than to a formal actor model, job system, or reactive pipeline.
+
+## Good Parts
+
+The media decoder lifecycle is recognizable:
+
+- threads are created when media is loaded
+- workers observe `DecoderContext::stop_flag`
+- the app joins decoder threads on shutdown
+- latest decoded frame numbers are published through atomics
+- decode timing is exposed through `DecoderPerfSample`
+
+That shape is useful. It lets decode run ahead of the GUI, while preserving a
+single render owner. The GUI thread being the only OpenGL/ImGui owner is the
+right default. The system should keep that property.
+
+The recent refined subject-mask RLE work also showed that small background
+prefetch can be useful. RLE chunk misses can cost around `120-140 ms`, but when
+prefetched ahead of playback they do not dominate the hot frame path.
+
+## Weak Boundaries
+
+### Ring Buffer Metadata
+
+`PictureBuffer` metadata in `src/decoder.h` is shared directly between decoder
+threads and the GUI thread:
+
+- `available_to_write`
+- `frame_number`
+- `local_frame_number`
+- `frame_pts`
+- `frame_source_code`
+- `color_matrix`
+
+Decoder workers write these fields in `src/decoder.cpp`. The GUI thread reads
+and mutates them in `src/red.cpp` while selecting and releasing displayed
+frames.
+
+That protocol is simple and has been useful, but the fields are plain C++
+objects, not atomics and not guarded by a slot-level lock. In strict C++ terms,
+that is a data race. It may behave predictably on the current platform, but it
+is not a hard synchronization contract.
+
+### Global Runtime State
+
+`src/global.h` exposes process-wide decode and YOLO coordination state:
+
+- `g_mutexes`
+- `g_cvs`
+- `g_ready`
+- `window_need_decoding`
+- `latest_decoded_frame`
+- `decoder_perf_samples`
+- `g_seek_info_mutex`
+
+These globals make it easy for older code paths to coordinate, but they make
+ownership harder to reason about. They also make it easier for new features to
+join the global state graph instead of declaring a narrow runtime dependency.
+
+### Seek State Locking
+
+Seek state is guarded by `g_seek_info_mutex`, but the contract is spread across
+the GUI, decoder workers, image loader, and stimulus playback code. It works,
+but the protocol is not represented as one object with explicit operations like
+`requestSeek`, `claimSeek`, and `completeSeek`.
+
+This increases the cost of changing seek behavior because correctness depends
+on all paths preserving the same informal sequence.
+
+### Mask Prefetch Worker
+
+The refined mask chunk prefetch path used to create detached threads that
+captured `this`:
+
+```text
+requestEyeMaskChunkPrefetch(...)
+  -> std::thread([this, chunk_id] { ensureEyeMaskChunk(...); }).detach()
+```
+
+The cache and in-flight sets prevent duplicate work, but detached loader-owned
+threads have two architectural problems:
+
+- Lifetime: the thread depends on the loader still being alive.
+- Back-pressure: the app does not have a central place to limit, cancel, or
+  flush prefetch work.
+
+This is the part most likely to cause future trouble if more Zarr readers adopt
+the same pattern.
+
+Current status: this has been replaced with a loader-owned worker. Prefetch
+requests now go through a bounded queue, duplicate suppression still uses the
+existing in-flight chunk set, and the worker is stopped and joined before
+archive reload, mask-state clear, and loader destruction.
+
+## Performance Interpretation
+
+The recent RLE playback smoke after caching the stimulus event timeline showed:
+
+- playback rate around `99.9 fps` for a `100 fps` source
+- UI build p50 around `2.8 ms`
+- stimulus timeline p50 around `1.4 ms`
+- refined subject-mask RLE data lookup p50 around `0.07 ms`
+- mask draw p50 around `0.45 ms`
+
+That means the immediate issue was not the decoder threading model and not RLE
+decode in the hot path. The large visible slowdown came from repeated GUI-side
+timeline work. Once the timeline was cached, the existing worker structure kept
+up with realtime playback.
+
+The remaining concern is architectural durability, not current throughput.
+
+## Recommended Direction
+
+Do not rewrite the whole threading model. Instead, add explicit ownership and
+synchronization at the existing boundaries.
+
+### 1. Make Buffer Slot State Explicit
+
+Replace plain shared `PictureBuffer` metadata with a small owner for slot
+state. The preferred shape is a `FrameSlotRing` or equivalent wrapper that owns
+the synchronization and returns short-lived read/write handles:
+
+```text
+WriteLease lease = slots.acquireWritable()
+decoder writes pixels into lease.buffer()
+lease.publish(metadata)
+
+ReadLease lease = slots.acquireReadable(target_frame)
+GUI uploads lease.buffer() using lease.metadata()
+lease.release()
+```
+
+The important part is the acquire/publish/release contract, not the lease type
+itself. Leases are useful as RAII handles, but they should be handles for
+explicit state transitions:
+
+- `acquireWritable` reserves a slot for a decoder.
+- `publish` makes complete pixel data and metadata visible together.
+- `cancel` returns an unpublished slot after decode failure or interruption.
+- `acquireReadable` gives the GUI a stable view of a ready slot.
+- `release` marks the read handle complete.
+- `releaseForReuse` returns a displayed/history slot to the writer.
+
+This avoids making half-written metadata visible, and it gives error paths a
+different transition from successful decode.
+
+The goal is to make these operations explicit:
+
+```text
+decoder claims writable slot
+decoder publishes decoded frame metadata
+GUI acquires readable slot
+GUI releases displayed slot back to writer
+```
+
+The lease must not hold a global lock while decoding or while uploading to the
+GPU. The lock or atomic protocol should protect slot state and metadata
+publication, while the heavy pixel work continues to use the existing storage
+buffers.
+
+Current status: `FrameSlotState` and read/write leases have been introduced as
+a sidecar on `PictureBuffer`. The main camera video decoder publishes through
+`FrameSlotWriteLease`, camera presentation acquires `FrameSlotReadLease`, and
+the primary playback release paths call `frameSlotReleaseForReuse`. Remaining
+legacy paths, including image-sequence loading, stimulus playback, and assorted
+debug/inspection scans, still need migration before the old raw metadata fields
+can be treated as compatibility-only. `--playback-smoke START:END` now provides
+an app-side smoke hook that seeks, starts playback, waits for the camera
+presenter to display the end frame, and exits with pass/fail status. The
+CPU-only `frame_slot_tests` CTest target covers lease reservation,
+publish/cancel, multi-reader blocking, and a threaded publish/read/reuse loop.
+
+#### Legacy malloc ring compatibility boundary
+
+The "legacy malloc ring" is the fixed-size per-camera queue used by the NVIDIA
+and CPU decode paths. It has two allocation layers:
+
+1. `render.h` allocates an array of `PictureBuffer` descriptors with `malloc`.
+2. Each descriptor points to a separately preallocated pixel payload: CPU RGBA
+   storage from `malloc`, or CUDA NV12 storage from `cudaMalloc`.
+
+The decoder writes the current slot, publishes its frame identity and timing,
+then advances `buffer_head` modulo the configured ring size. Presentation finds
+a suitable published slot and eventually releases old history for reuse. Pixel
+payloads are reused rather than allocated for every decoded frame.
+
+Because `malloc` does not run C++ constructors, `PictureBuffer` must remain a
+trivial type. It cannot directly contain a mutex, `std::string`,
+`std::shared_ptr`, or another member requiring construction and destruction.
+`FrameSlotState` therefore lives in a separately constructed sidecar referenced
+by the legacy descriptor. It owns the slot mutex, publication phase, reader
+count, portable metadata snapshot, and `std::shared_ptr<FrameSurface>`.
+
+There are two different resource-ownership models behind that shared surface
+interface:
+
+- The CPU/CUDA adapter is a non-owning view over a payload owned by the legacy
+  ring. A read lease prevents writers from reusing the slot while presentation
+  is reading it; manual ring teardown still frees the payload.
+- An Apple adapter owns a retained `CVPixelBuffer`. Its final reference releases
+  the native buffer, so AVFoundation may recycle its decode pool only after all
+  Crimson and Metal consumers have finished with that surface.
+
+This distinction is intentional. The portable contract shares ownership of a
+*surface handle*; it does not pretend that all backends allocate or destroy
+pixel storage in the same way.
+
+For Phase 3, new macOS code must not allocate or inspect raw `PictureBuffer`
+storage. The Apple provider should own a small bounded queue of reference-counted
+native surfaces and publish them through the Phase 2 frame contracts. The
+legacy ring remains an NVIDIA compatibility implementation, not the model for
+the Apple backend.
+
+The remaining technical debt is:
+
+- image-sequence, stimulus, and diagnostic paths still read or mutate mirrored
+  `PictureBuffer` fields without consistently using leases or snapshots;
+- allocation and teardown of the descriptor array, sidecars, CPU payloads, and
+  CUDA payloads remain distributed and manual;
+- slot selection, payload storage, and compatibility metadata are still coupled
+  through the public `PictureBuffer` layout;
+- the raw `available_to_write` mirror remains visible, making it easy for new
+  code to bypass the synchronized state machine.
+
+The safe cleanup sequence is to migrate every remaining reader and writer to
+the lease/snapshot API, centralize ring construction and teardown in one RAII
+owner, and only then make the raw fields private or remove `PictureBuffer`.
+That cleanup should preserve the allocation and reuse behavior until NVIDIA
+playback tests prove that the ownership refactor is behavior-neutral.
+
+### 2. Keep Mask Prefetch Owned
+
+The refined mask path now uses a small loader-owned prefetch executor:
+
+- one worker thread is enough initially
+- bounded queue of chunk IDs
+- duplicate suppression through the existing in-flight set
+- cancellation on archive unload
+- joined during loader/session teardown
+
+The public behavior stays the same:
+
+```text
+ensure current chunk synchronously
+queue adjacent chunk prefetch
+```
+
+The important change is that prefetch lifetime becomes owned and cancellable.
+
+### 3. Wrap Decode Globals In A Runtime Object
+
+Move the decode globals toward a `PlaybackRuntime` or `DecodeCoordinator`:
+
+```text
+PlaybackRuntime
+  camera decode flags
+  latest decoded frames
+  decoder perf samples
+  seek coordinator
+  decoder thread handles
+```
+
+The first slice can be mechanical: preserve behavior, but pass a runtime object
+instead of reaching through `global.h`.
+
+### 4. Keep Rendering Single-Threaded
+
+Do not move ImGui or OpenGL draw submission to worker threads. The current
+single render owner is a good constraint. Background work should produce
+immutable or explicitly synchronized data that the GUI thread consumes.
+
+## Suggested Refactor Sequence
+
+1. Keep the `FrameSlotState` wrapper covered by `frame_slot_tests` and
+   `--playback-smoke` runs.
+2. Convert image loader and stimulus playback to the same slot API.
+3. Convert remaining debug/inspection scans to metadata snapshots.
+4. Keep the owned mask prefetch worker covered by reload/shutdown smoke tests.
+5. Add shutdown/load-unload tests or smoke tooling that exercises archive reload
+   while prefetch is active.
+6. Move global decode maps into a runtime object once the synchronization
+   boundaries are explicit.
+
+## Non-Goals
+
+Do not use this work to:
+
+- move rendering off the GUI thread
+- rewrite playback timing
+- replace TensorStore
+- redesign the RLE or dense mask contracts
+- introduce a large generic job system before the smaller boundaries are fixed
+
+The near-term goal is not a new architecture. It is to make the current
+architecture's ownership and thread handoffs explicit enough that future async
+features are safe to add.

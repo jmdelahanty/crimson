@@ -2,7 +2,10 @@
 #define RED_RENDER
 #include "gx_helper.h"
 #include "decoder.h"
+#include "frame_slot.h"
+#include "platform/nvidia/nvidia_presentation_texture.h"
 #include <cuda_runtime_api.h>
+#include <cstdint>
 #include <cstdlib>
 #include <vector>
 
@@ -14,26 +17,75 @@ struct PBO_CUDA {
     size_t cuda_pbo_storage_buffer_size;
 };
 
+struct CameraTextureDrawTrace {
+    bool enabled = false;
+    uint64_t queue_sequence = 0;
+    uint64_t last_logged_sequence = 0;
+
+    int view_idx = -1;
+    GLuint queued_texture_id = 0;
+    GLuint front_texture_id = 0;
+    GLuint staging_texture_id = 0;
+    GLuint front_pbo_id = 0;
+    GLuint staging_pbo_id = 0;
+
+    bool front_valid = false;
+    int front_parent_frame = -1;
+    int front_local_frame = -1;
+    int64_t front_pts = -1;
+
+    bool staging_valid = false;
+    int staging_parent_frame = -1;
+    int staging_local_frame = -1;
+    int64_t staging_pts = -1;
+
+    bool callback_observed = false;
+    int callback_count = 0;
+    GLint callback_active_texture = 0;
+    GLuint callback_bound_texture_id = 0;
+    bool callback_bound_matches_queued = false;
+};
+
 struct CameraResources {
     u32 image_width = 0;
     u32 image_height = 0;
     GLuint image_texture = 0;
+    NvidiaOpenGlPresentationTexture presentation_texture;
+    GLuint nv12_luma_texture = 0;
+    GLuint nv12_chroma_texture = 0;
+    GLuint nv12_stage_fbo = 0;
     PBO_CUDA pbo_cuda = {};
     GLuint playback_staging_texture = 0;
     PBO_CUDA playback_staging_pbo = {};
     std::vector<PBO_CUDA> display_buffer_pbos;
     PictureBuffer *display_buffer = nullptr;
-    SeekInfo seek_context = {false, false, 0, false, 0, 0};
+    SeekInfo seek_context = {};
     int last_uploaded_frame = -1;
+    int last_uploaded_local_frame = -1;
+    int64_t last_uploaded_pts = -1;
     bool texture_has_valid_frame = false;
     int applied_preview_sampling_mode = -1;
     int playback_staging_frame = -1;
+    int playback_staging_local_frame = -1;
+    int64_t playback_staging_pts = -1;
     bool playback_staging_valid = false;
     int playback_staging_preview_sampling_mode = -1;
     int display_texture_width = 0;
     int display_texture_height = 0;
     std::vector<unsigned char> playback_preview_rgba_cpu;
+    CameraTextureDrawTrace texture_draw_trace;
 };
+
+inline void render_refresh_camera_presentation_texture(
+    CameraResources* camera) {
+    if (camera == nullptr) {
+        return;
+    }
+    camera->presentation_texture.reset(
+        static_cast<uintptr_t>(camera->image_texture),
+        camera->display_texture_width, camera->display_texture_height,
+        FramePixelFormat::RGBA8);
+}
 
 struct render_scene
 {
@@ -84,10 +136,15 @@ static void render_allocate_scene_memory(render_scene *scene, u32 size_of_buffer
         scene->cameras[j].seek_context.seek_accurate = false;
         scene->cameras[j].seek_context.seek_id = 0;
         scene->cameras[j].seek_context.settled_seek_id = 0;
+        scene->cameras[j].seek_context.frame_number_map.reset();
         scene->cameras[j].last_uploaded_frame = -1;
+        scene->cameras[j].last_uploaded_local_frame = -1;
+        scene->cameras[j].last_uploaded_pts = -1;
         scene->cameras[j].texture_has_valid_frame = false;
         scene->cameras[j].applied_preview_sampling_mode = -1;
         scene->cameras[j].playback_staging_frame = -1;
+        scene->cameras[j].playback_staging_local_frame = -1;
+        scene->cameras[j].playback_staging_pts = -1;
         scene->cameras[j].playback_staging_valid = false;
         scene->cameras[j].playback_staging_preview_sampling_mode = -1;
         scene->cameras[j].display_texture_width =
@@ -151,7 +208,7 @@ static void render_allocate_scene_memory(render_scene *scene, u32 size_of_buffer
                 scene->cameras[j].display_buffer[i].frame_bytes =
                     rgba_frame_bytes;
                 scene->cameras[j].display_buffer[i].format =
-                    PictureBufferFormat::RGBA32;
+                    FramePixelFormat::RGBA8;
             } else {
                 // GPU-buffer mode stores compact NV12 slots and converts only
                 // the selected display frame to RGBA at presentation time.
@@ -167,12 +224,19 @@ static void render_allocate_scene_memory(render_scene *scene, u32 size_of_buffer
                 scene->cameras[j].display_buffer[i].frame_bytes =
                     nv12_frame_bytes;
                 scene->cameras[j].display_buffer[i].format =
-                    PictureBufferFormat::NV12;
+                    FramePixelFormat::NV12;
             }
             scene->cameras[j].display_buffer[i].frame_number = -1;
+            scene->cameras[j].display_buffer[i].local_frame_number = -1;
+            scene->cameras[j].display_buffer[i].frame_pts = -1;
+            scene->cameras[j].display_buffer[i].frame_source_code = 0;
             scene->cameras[j].display_buffer[i].available_to_write = true;
             scene->cameras[j].display_buffer[i].color_matrix =
                 ColorSpaceStandard_BT709;
+            scene->cameras[j].display_buffer[i].color_range =
+                ColorRange_Unspecified;
+            scene->cameras[j].display_buffer[i].frame_slot_state = nullptr;
+            frameSlotInitialize(scene->cameras[j].display_buffer[i]);
         }
     }
 
@@ -187,6 +251,7 @@ static void render_allocate_scene_memory(render_scene *scene, u32 size_of_buffer
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE); // This is required on WebGL for non power-of-two textures
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE); // Same
+        render_refresh_camera_presentation_texture(&scene->cameras[j]);
 
         glGenTextures(1, &scene->cameras[j].playback_staging_texture);
         glBindTexture(GL_TEXTURE_2D, scene->cameras[j].playback_staging_texture);
@@ -195,6 +260,31 @@ static void render_allocate_scene_memory(render_scene *scene, u32 size_of_buffer
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+        glGenTextures(1, &scene->cameras[j].nv12_luma_texture);
+        glBindTexture(GL_TEXTURE_2D, scene->cameras[j].nv12_luma_texture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, scene->cameras[j].image_width,
+                     scene->cameras[j].image_height, 0, GL_RED,
+                     GL_UNSIGNED_BYTE, NULL);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+        const int chroma_width =
+            static_cast<int>((scene->cameras[j].image_width + 1) / 2);
+        const int chroma_height =
+            static_cast<int>((scene->cameras[j].image_height + 1) / 2);
+        glGenTextures(1, &scene->cameras[j].nv12_chroma_texture);
+        glBindTexture(GL_TEXTURE_2D, scene->cameras[j].nv12_chroma_texture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RG8, chroma_width, chroma_height, 0,
+                     GL_RG, GL_UNSIGNED_BYTE, NULL);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+        glGenFramebuffers(1, &scene->cameras[j].nv12_stage_fbo);
     }
 
 }
@@ -214,6 +304,7 @@ static void render_resize_camera_texture(CameraResources* camera,
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     camera->display_texture_width = texture_width;
     camera->display_texture_height = texture_height;
+    render_refresh_camera_presentation_texture(camera);
 }
 
 #endif

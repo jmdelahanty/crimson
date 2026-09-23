@@ -1,0 +1,78 @@
+#include "gui/canonical_overlay_session.h"
+
+#include "zarr/archive_context.h"
+#include "zarr/tensorstore_bound_keypoint_overlay_repository.h"
+#include "zarr/tensorstore_subject_mask_overlay_repository.h"
+#include "zarr/tensorstore_subject_shape_overlay_repository.h"
+#include "zarr/tensorstore_bound_subject_shape_overlay_repository.h"
+
+#include <exception>
+
+namespace crimson::gui {
+CanonicalOverlayRepositories openCanonicalOverlayRepositories(
+    const CanonicalOverlayOpenRequest& request) {
+  CanonicalOverlayRepositories result;
+  auto archive = zarr::ArchiveContext::Open(request.archive_path, &result.error);
+  if (!archive) return result;
+  zarr::CanonicalOverlaySelectionRequest selection_request;
+  selection_request.eye_run = request.eye_run;
+  selection_request.expected_recording_id = request.recording_id;
+  selection_request.expected_frame_count = request.frame_count;
+  selection_request.expected_source_width = request.source_width;
+  selection_request.expected_source_height = request.source_height;
+  auto selection = zarr::SelectCanonicalOverlaySources(archive, selection_request, &result.error);
+  if (!selection) return result;
+  result.selection = *selection;
+
+  const auto open_product = [](const auto& open, std::string& error) {
+    try { open(); }
+    catch (const std::exception& exception) { error = exception.what(); }
+    catch (...) { error = "Overlay product opener threw an unknown exception"; }
+  };
+  result.keypoint_error = selection->keypoints.error;
+  result.mask_error = selection->mask.error;
+  result.shape_error = selection->shape.error;
+  if (selection->keypoints.valid) {
+    open_product([&] {
+      zarr::BoundKeypointOverlayOpenRequest keypoints;
+      keypoints.archive = archive;
+      keypoints.selection = *selection;
+      result.keypoints = zarr::OpenBoundKeypointOverlayRepository(keypoints, &result.keypoint_error);
+    }, result.keypoint_error);
+  }
+  if (selection->mask.valid) {
+    open_product([&] {
+      zarr::SubjectMaskOverlayOpenOptions masks;
+      masks.requested_run = selection->mask.run_id;
+      masks.expected_manifest_payload_digest = selection->mask.manifest_payload_digest;
+      masks.allow_selector_ineligible = selection->mask.bound_selector_exception;
+      masks.require_strict_v1 = true;
+      masks.max_read_rows = 8;
+      masks.max_cached_payload_bytes = 64ULL * 1024 * 1024;
+      masks.max_storage_chunk_bytes = 512ULL * 1024 * 1024;
+      masks.max_mapping_bytes = 768ULL * 1024 * 1024;
+      masks.max_observations_per_frame = 16;
+      masks.disable_prefetch = true;
+      masks.serial_dense_channels = true;
+      result.masks = zarr::OpenSubjectMaskOverlayRepository(archive, masks, &result.mask_error);
+      if (result.masks && result.masks->descriptor().camera_frame_count != request.frame_count) {
+        result.masks.reset();
+        result.mask_error = "Bound mask frame domain disagrees with indexed video";
+      }
+    }, result.mask_error);
+  }
+  if (selection->shape.valid) {
+    open_product([&] {
+      zarr::BoundSubjectShapeOverlayOpenRequest shapes;
+      shapes.archive = archive;
+      shapes.selection = *selection;
+      result.shapes = zarr::OpenBoundSubjectShapeOverlayRepository(shapes, &result.shape_error);
+      if (result.shapes && result.shapes->descriptor().camera_frame_count != request.frame_count) {
+        result.shapes.reset();
+        result.shape_error = "Bound shape frame domain disagrees with indexed video";
+      }
+    }, result.shape_error);
+  }
+  return result;
+}
+} // namespace crimson::gui

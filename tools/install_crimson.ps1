@@ -4,7 +4,10 @@ param(
     [string]$InstallRoot,
     [switch]$ReplaceExisting,
     [switch]$CreateDesktopShortcut,
-    [switch]$Launch
+    [switch]$Launch,
+    [switch]$SkipPreflightCheck,
+    [switch]$SkipPostInstallCheck,
+    [switch]$RequireNvidiaSmi
 )
 
 $ErrorActionPreference = "Stop"
@@ -44,19 +47,14 @@ function Require-Path {
     if (-not (Test-Path -LiteralPath $PathValue)) {
         throw "$Label not found: $PathValue"
     }
-
     return $PathValue
 }
 
 function Read-JsonFile {
-    param(
-        [string]$PathValue
-    )
-
+    param([string]$PathValue)
     if (-not (Test-Path -LiteralPath $PathValue)) {
         return $null
     }
-
     try {
         return Get-Content -LiteralPath $PathValue -Raw | ConvertFrom-Json
     } catch {
@@ -76,7 +74,10 @@ function Write-JsonFile {
     }
 
     $json = $Data | ConvertTo-Json -Depth 8
-    [System.IO.File]::WriteAllText($PathValue, $json + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
+    [System.IO.File]::WriteAllText(
+        $PathValue,
+        $json + [Environment]::NewLine,
+        [System.Text.UTF8Encoding]::new($false))
 }
 
 function Get-UtcTimestampString {
@@ -84,19 +85,16 @@ function Get-UtcTimestampString {
 }
 
 function Get-SourceUpdateInfo {
-    param(
-        [string]$ResolvedSourceRoot
-    )
+    param([string]$ResolvedSourceRoot)
 
     $leaf = Split-Path -Leaf $ResolvedSourceRoot
     $parent = Split-Path -Parent $ResolvedSourceRoot
 
     if ($leaf -ieq "current") {
-        $shareRoot = $parent
         return [ordered]@{
-            share_root = $shareRoot
-            latest_manifest_path = Join-Path $shareRoot "latest.json"
-            current_root = Join-Path $shareRoot "current"
+            share_root = $parent
+            latest_manifest_path = Join-Path $parent "latest.json"
+            current_root = Join-Path $parent "current"
         }
     }
 
@@ -112,12 +110,39 @@ function Get-SourceUpdateInfo {
     return $null
 }
 
+function Invoke-RuntimeCheck {
+    param(
+        [string]$AppRoot,
+        [string]$Label
+    )
+
+    $runtimeCheckScript = Join-Path $AppRoot "check_crimson_runtime.ps1"
+    if (-not (Test-Path -LiteralPath $runtimeCheckScript)) {
+        Write-Host ""
+        Write-Host "Skipping Crimson runtime check ($Label):"
+        Write-Host "  missing: $runtimeCheckScript"
+        return
+    }
+
+    Write-Host ""
+    Write-Host "Running Crimson runtime check ($Label)..."
+    if ($RequireNvidiaSmi) {
+        & $runtimeCheckScript -AppRoot $AppRoot -RequireNvidiaSmi
+    } else {
+        & $runtimeCheckScript -AppRoot $AppRoot
+    }
+}
+
 $sourceExe = Require-Path -PathValue (Join-Path $SourceRoot "bin/redgui.exe") -Label "Source redgui.exe"
 $sourceFonts = Require-Path -PathValue (Join-Path $SourceRoot "share/crimson/fonts") -Label "Source fonts directory"
 $sourceConfig = Require-Path -PathValue (Join-Path $SourceRoot "share/crimson/config") -Label "Source config directory"
 $sourceReleaseMetadataPath = Join-Path $SourceRoot "release.json"
 $sourceReleaseMetadata = Read-JsonFile -PathValue $sourceReleaseMetadataPath
 $sourceUpdateInfo = Get-SourceUpdateInfo -ResolvedSourceRoot $SourceRoot
+
+if (-not $SkipPreflightCheck) {
+    Invoke-RuntimeCheck -AppRoot $SourceRoot -Label "source app drop"
+}
 
 if (Test-Path -LiteralPath $InstallRoot) {
     if ($ReplaceExisting) {
@@ -144,11 +169,6 @@ Copy-Item -Path (Join-Path $SourceRoot "*") -Destination $InstallRoot -Recurse -
 $installedExe = Require-Path -PathValue (Join-Path $InstallRoot "bin/redgui.exe") -Label "Installed redgui.exe"
 $installedFonts = Require-Path -PathValue (Join-Path $InstallRoot "share/crimson/fonts") -Label "Installed fonts directory"
 $installedConfig = Require-Path -PathValue (Join-Path $InstallRoot "share/crimson/config") -Label "Installed config directory"
-$installedReleaseMetadata = if (Test-Path -LiteralPath (Join-Path $InstallRoot "release.json")) {
-    Join-Path $InstallRoot "release.json"
-} else {
-    ""
-}
 
 $installedReleaseName = ""
 $installedReleasePublishedUtc = ""
@@ -165,6 +185,11 @@ if ($sourceReleaseMetadata) {
     }
 }
 
+$installedReleaseMetadataPath = ""
+if (Test-Path -LiteralPath (Join-Path $InstallRoot "release.json")) {
+    $installedReleaseMetadataPath = Join-Path $InstallRoot "release.json"
+}
+
 $installMetadata = [ordered]@{
     schema_version = 1
     installed_at_utc = Get-UtcTimestampString
@@ -173,13 +198,17 @@ $installMetadata = [ordered]@{
     installed_release_name = $installedReleaseName
     installed_release_published_at_utc = $installedReleasePublishedUtc
     installed_commit = $installedCommit
-    installed_release_metadata_path = $installedReleaseMetadata
+    installed_release_metadata_path = $installedReleaseMetadataPath
     latest_manifest_path = $(if ($sourceUpdateInfo) { $sourceUpdateInfo.latest_manifest_path } else { "" })
     current_root = $(if ($sourceUpdateInfo) { $sourceUpdateInfo.current_root } else { "" })
     share_root = $(if ($sourceUpdateInfo) { $sourceUpdateInfo.share_root } else { "" })
 }
 $installMetadataPath = Join-Path $InstallRoot "install_metadata.json"
 Write-JsonFile -PathValue $installMetadataPath -Data $installMetadata
+
+if (-not $SkipPostInstallCheck) {
+    Invoke-RuntimeCheck -AppRoot $InstallRoot -Label "installed app"
+}
 
 if ($CreateDesktopShortcut) {
     $desktopDir = [Environment]::GetFolderPath("Desktop")

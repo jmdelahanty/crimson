@@ -47,6 +47,7 @@ The promotion rules for moving stacks between statuses live in
 | `linux-trt10-cuda12.4-debug` | Linux | `12.4` | `10.0.1.6` | `4.10.0` | custom FFmpeg root via `FFMPEG_ROOT` | `baseline` | same stack as release, debug build mode |
 | `windows-trt10-cuda12.4` | Windows | `12.4` | `10.0.1.6` | `4.10.0` | Windows FFmpeg/NVIDIA codec stack still to be staged | `planned` | first intended Windows target stack; validation record in [docs/crimson_windows_trt10_cuda12.4_validation_record.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_windows_trt10_cuda12.4_validation_record.md) |
 | `cuda13.x-*` | Linux / Windows | `13.x` | `TBD` | `TBD` | `TBD` | `experimental` | do not infer support from `nvidia-smi` alone |
+| `macos-viewer-*` | macOS | none | none | `TBD` | VideoToolbox/Metal/CPU TBD | `experimental` | not a port of the CUDA stack; first plausible target is viewer-only, see [docs/crimson_ubuntu_macos_platform_strategy.md](/home/delahantyj@hhmi.org/gitrepos/crimson-ui-monolith/docs/crimson_ubuntu_macos_platform_strategy.md) |
 | historical README path | Linux | `12.0` | `8.6.1.6` | `4.8.0` | manual local install | `legacy` | older instructions exist, but this is not the current maintained preset stack |
 
 ---
@@ -111,6 +112,12 @@ Until then:
 Promotion and downgrade decisions should follow:
 
 - [docs/crimson_dependency_stack_promotion_process.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_dependency_stack_promotion_process.md)
+
+macOS is also experimental, but for a different reason. It is not a CUDA stack
+variant. A macOS build would need a no-CUDA viewer architecture first, then
+separate Metal/VideoToolbox and non-TensorRT inference work. See:
+
+- [docs/crimson_ubuntu_macos_platform_strategy.md](/home/delahantyj@hhmi.org/gitrepos/crimson-ui-monolith/docs/crimson_ubuntu_macos_platform_strategy.md)
 
 ### Legacy Stacks
 

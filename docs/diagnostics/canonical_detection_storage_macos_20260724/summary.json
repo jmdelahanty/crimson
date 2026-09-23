@@ -1,0 +1,3009 @@
+{
+  "all_gates_passed": false,
+  "gates": [
+    {
+      "cache_bytes": 0,
+      "layout": "hybrid",
+      "limit": 100.0,
+      "measured": 130.676958,
+      "name": "offset_read_median_under_100_ms",
+      "passed": false
+    },
+    {
+      "cache_bytes": 0,
+      "layout": "regular",
+      "limit": 100.0,
+      "measured": 114.840625,
+      "name": "offset_read_median_under_100_ms",
+      "passed": false
+    },
+    {
+      "cache_bytes": 134217728,
+      "layout": "hybrid",
+      "limit": 100.0,
+      "measured": 83.13275,
+      "name": "offset_read_median_under_100_ms",
+      "passed": true
+    },
+    {
+      "cache_bytes": 134217728,
+      "layout": "regular",
+      "limit": 100.0,
+      "measured": 153.800958,
+      "name": "offset_read_median_under_100_ms",
+      "passed": false
+    },
+    {
+      "cache_bytes": 0,
+      "limit": 25.0,
+      "measured": 15.83633300000001,
+      "name": "hybrid_offset_absolute_regression_at_most_25_ms",
+      "passed": true
+    },
+    {
+      "cache_bytes": 134217728,
+      "limit": 25.0,
+      "measured": -70.668208,
+      "name": "hybrid_offset_absolute_regression_at_most_25_ms",
+      "passed": true
+    },
+    {
+      "cache_bytes": 0,
+      "layout": "hybrid",
+      "limit": 150.0,
+      "measured": 267.0170086,
+      "name": "random_contract_frame_cross_repetition_p95_under_150_ms",
+      "pass_index": 0,
+      "passed": false
+    },
+    {
+      "cache_bytes": 0,
+      "layout": "hybrid",
+      "limit": 150.0,
+      "measured": 4.2606924,
+      "name": "random_contract_frame_cross_repetition_p95_under_150_ms",
+      "pass_index": 1,
+      "passed": true
+    },
+    {
+      "cache_bytes": 0,
+      "layout": "hybrid",
+      "limit": 150.0,
+      "measured": 32.273525600000006,
+      "name": "random_ui_frame_cross_repetition_p95_under_150_ms",
+      "pass_index": 0,
+      "passed": true
+    },
+    {
+      "cache_bytes": 0,
+      "layout": "hybrid",
+      "limit": 150.0,
+      "measured": 1.806575,
+      "name": "random_ui_frame_cross_repetition_p95_under_150_ms",
+      "pass_index": 1,
+      "passed": true
+    },
+    {
+      "cache_bytes": 0,
+      "layout": "hybrid",
+      "limit": 1400.0,
+      "measured": 462521.347887112,
+      "name": "sequential_cross_repetition_p05_at_least_1400_fps",
+      "pass_index": 0,
+      "passed": true,
+      "workload": "sequential_contract_forward"
+    },
+    {
+      "cache_bytes": 0,
+      "layout": "hybrid",
+      "limit": 1400.0,
+      "measured": 567057.0531470943,
+      "name": "sequential_cross_repetition_p05_at_least_1400_fps",
+      "pass_index": 1,
+      "passed": true,
+      "workload": "sequential_contract_forward"
+    },
+    {
+      "cache_bytes": 0,
+      "layout": "hybrid",
+      "limit": 1400.0,
+      "measured": 1183240.3410779454,
+      "name": "sequential_cross_repetition_p05_at_least_1400_fps",
+      "pass_index": 0,
+      "passed": true,
+      "workload": "sequential_ui_forward"
+    },
+    {
+      "cache_bytes": 0,
+      "layout": "hybrid",
+      "limit": 1400.0,
+      "measured": 1422321.3193007866,
+      "name": "sequential_cross_repetition_p05_at_least_1400_fps",
+      "pass_index": 1,
+      "passed": true,
+      "workload": "sequential_ui_forward"
+    },
+    {
+      "cache_bytes": 0,
+      "layout": "regular",
+      "limit": 150.0,
+      "measured": 308.28596699999997,
+      "name": "random_contract_frame_cross_repetition_p95_under_150_ms",
+      "pass_index": 0,
+      "passed": false
+    },
+    {
+      "cache_bytes": 0,
+      "layout": "regular",
+      "limit": 150.0,
+      "measured": 151.3593412,
+      "name": "random_contract_frame_cross_repetition_p95_under_150_ms",
+      "pass_index": 1,
+      "passed": false
+    },
+    {
+      "cache_bytes": 0,
+      "layout": "regular",
+      "limit": 150.0,
+      "measured": 98.3944252,
+      "name": "random_ui_frame_cross_repetition_p95_under_150_ms",
+      "pass_index": 0,
+      "passed": true
+    },
+    {
+      "cache_bytes": 0,
+      "layout": "regular",
+      "limit": 150.0,
+      "measured": 67.2989006,
+      "name": "random_ui_frame_cross_repetition_p95_under_150_ms",
+      "pass_index": 1,
+      "passed": true
+    },
+    {
+      "cache_bytes": 0,
+      "layout": "regular",
+      "limit": 1400.0,
+      "measured": 72247.844768838,
+      "name": "sequential_cross_repetition_p05_at_least_1400_fps",
+      "pass_index": 0,
+      "passed": true,
+      "workload": "sequential_contract_forward"
+    },
+    {
+      "cache_bytes": 0,
+      "layout": "regular",
+      "limit": 1400.0,
+      "measured": 104528.8599797294,
+      "name": "sequential_cross_repetition_p05_at_least_1400_fps",
+      "pass_index": 1,
+      "passed": true,
+      "workload": "sequential_contract_forward"
+    },
+    {
+      "cache_bytes": 0,
+      "layout": "regular",
+      "limit": 1400.0,
+      "measured": 328175.0906086324,
+      "name": "sequential_cross_repetition_p05_at_least_1400_fps",
+      "pass_index": 0,
+      "passed": true,
+      "workload": "sequential_ui_forward"
+    },
+    {
+      "cache_bytes": 0,
+      "layout": "regular",
+      "limit": 1400.0,
+      "measured": 327816.40132488526,
+      "name": "sequential_cross_repetition_p05_at_least_1400_fps",
+      "pass_index": 1,
+      "passed": true,
+      "workload": "sequential_ui_forward"
+    },
+    {
+      "cache_bytes": 134217728,
+      "layout": "hybrid",
+      "limit": 150.0,
+      "measured": 223.9236006,
+      "name": "random_contract_frame_cross_repetition_p95_under_150_ms",
+      "pass_index": 0,
+      "passed": false
+    },
+    {
+      "cache_bytes": 134217728,
+      "layout": "hybrid",
+      "limit": 150.0,
+      "measured": 0.4262408,
+      "name": "random_contract_frame_cross_repetition_p95_under_150_ms",
+      "pass_index": 1,
+      "passed": true
+    },
+    {
+      "cache_bytes": 134217728,
+      "layout": "hybrid",
+      "limit": 150.0,
+      "measured": 85.5373246,
+      "name": "random_ui_frame_cross_repetition_p95_under_150_ms",
+      "pass_index": 0,
+      "passed": true
+    },
+    {
+      "cache_bytes": 134217728,
+      "layout": "hybrid",
+      "limit": 150.0,
+      "measured": 0.16789179999999998,
+      "name": "random_ui_frame_cross_repetition_p95_under_150_ms",
+      "pass_index": 1,
+      "passed": true
+    },
+    {
+      "cache_bytes": 134217728,
+      "layout": "hybrid",
+      "limit": 1400.0,
+      "measured": 462299.75679609773,
+      "name": "sequential_cross_repetition_p05_at_least_1400_fps",
+      "pass_index": 0,
+      "passed": true,
+      "workload": "sequential_contract_forward"
+    },
+    {
+      "cache_bytes": 134217728,
+      "layout": "hybrid",
+      "limit": 1400.0,
+      "measured": 9176585.521954741,
+      "name": "sequential_cross_repetition_p05_at_least_1400_fps",
+      "pass_index": 1,
+      "passed": true,
+      "workload": "sequential_contract_forward"
+    },
+    {
+      "cache_bytes": 134217728,
+      "layout": "hybrid",
+      "limit": 1400.0,
+      "measured": 665739.6180463694,
+      "name": "sequential_cross_repetition_p05_at_least_1400_fps",
+      "pass_index": 0,
+      "passed": true,
+      "workload": "sequential_ui_forward"
+    },
+    {
+      "cache_bytes": 134217728,
+      "layout": "hybrid",
+      "limit": 1400.0,
+      "measured": 20590240.15178965,
+      "name": "sequential_cross_repetition_p05_at_least_1400_fps",
+      "pass_index": 1,
+      "passed": true,
+      "workload": "sequential_ui_forward"
+    },
+    {
+      "cache_bytes": 134217728,
+      "layout": "regular",
+      "limit": 150.0,
+      "measured": 283.8863662,
+      "name": "random_contract_frame_cross_repetition_p95_under_150_ms",
+      "pass_index": 0,
+      "passed": false
+    },
+    {
+      "cache_bytes": 134217728,
+      "layout": "regular",
+      "limit": 150.0,
+      "measured": 0.28724239999999995,
+      "name": "random_contract_frame_cross_repetition_p95_under_150_ms",
+      "pass_index": 1,
+      "passed": true
+    },
+    {
+      "cache_bytes": 134217728,
+      "layout": "regular",
+      "limit": 150.0,
+      "measured": 74.2572992,
+      "name": "random_ui_frame_cross_repetition_p95_under_150_ms",
+      "pass_index": 0,
+      "passed": true
+    },
+    {
+      "cache_bytes": 134217728,
+      "layout": "regular",
+      "limit": 150.0,
+      "measured": 0.13790059999999998,
+      "name": "random_ui_frame_cross_repetition_p95_under_150_ms",
+      "pass_index": 1,
+      "passed": true
+    },
+    {
+      "cache_bytes": 134217728,
+      "layout": "regular",
+      "limit": 1400.0,
+      "measured": 9710759.581046885,
+      "name": "sequential_cross_repetition_p05_at_least_1400_fps",
+      "pass_index": 0,
+      "passed": true,
+      "workload": "sequential_contract_forward"
+    },
+    {
+      "cache_bytes": 134217728,
+      "layout": "regular",
+      "limit": 1400.0,
+      "measured": 8881852.11781478,
+      "name": "sequential_cross_repetition_p05_at_least_1400_fps",
+      "pass_index": 1,
+      "passed": true,
+      "workload": "sequential_contract_forward"
+    },
+    {
+      "cache_bytes": 134217728,
+      "layout": "regular",
+      "limit": 1400.0,
+      "measured": 13674973.368960684,
+      "name": "sequential_cross_repetition_p05_at_least_1400_fps",
+      "pass_index": 0,
+      "passed": true,
+      "workload": "sequential_ui_forward"
+    },
+    {
+      "cache_bytes": 134217728,
+      "layout": "regular",
+      "limit": 1400.0,
+      "measured": 25840879.033854704,
+      "name": "sequential_cross_repetition_p05_at_least_1400_fps",
+      "pass_index": 1,
+      "passed": true,
+      "workload": "sequential_ui_forward"
+    }
+  ],
+  "groups": {
+    "cache_0/hybrid": {
+      "frame_row_offsets_read_ms": {
+        "count": 5,
+        "max": 133.765584,
+        "median": 130.676958,
+        "min": 114.213459,
+        "p95": 133.5840588
+      },
+      "random_frames_contract/pass_0": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 3072.0,
+          "median": 3072.0,
+          "min": 3072.0,
+          "p95": 3072.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 48070727.0,
+          "median": 48070727.0,
+          "min": 48070727.0,
+          "p95": 48070727.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 1920.0,
+          "median": 1920.0,
+          "min": 1920.0,
+          "p95": 1920.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 308.63241700000003,
+          "median": 89.37,
+          "min": 81.26558200000001,
+          "p95": 267.0170086
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 16153.601916,
+          "median": 5506.839875,
+          "min": 5361.407208,
+          "p95": 14101.751357799998
+        }
+      },
+      "random_frames_contract/pass_1": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 3072.0,
+          "median": 3072.0,
+          "min": 3072.0,
+          "p95": 3072.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 48070727.0,
+          "median": 48070727.0,
+          "min": 48070727.0,
+          "p95": 48070727.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 1920.0,
+          "median": 1920.0,
+          "min": 1920.0,
+          "p95": 1920.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 4.534001000000001,
+          "median": 2.936043,
+          "min": 2.225,
+          "p95": 4.2606924
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 273.506708,
+          "median": 183.695584,
+          "min": 172.196042,
+          "p95": 256.21459139999996
+        }
+      },
+      "random_frames_ui/pass_0": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 1152.0,
+          "median": 1152.0,
+          "min": 1152.0,
+          "p95": 1152.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 8105650.0,
+          "median": 8105650.0,
+          "min": 8105650.0,
+          "p95": 8105650.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 640.0,
+          "median": 640.0,
+          "min": 640.0,
+          "p95": 640.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 32.590959000000005,
+          "median": 30.986042,
+          "min": 30.252207,
+          "p95": 32.273525600000006
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 2175.115458,
+          "median": 2019.939166,
+          "min": 1971.659042,
+          "p95": 2146.247133
+        }
+      },
+      "random_frames_ui/pass_1": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 1152.0,
+          "median": 1152.0,
+          "min": 1152.0,
+          "p95": 1152.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 8105650.0,
+          "median": 8105650.0,
+          "min": 8105650.0,
+          "p95": 8105650.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 640.0,
+          "median": 640.0,
+          "min": 640.0,
+          "p95": 640.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 1.8288749999999998,
+          "median": 1.4780010000000001,
+          "min": 1.1679169999999999,
+          "p95": 1.806575
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 88.44875,
+          "median": 85.841833,
+          "min": 84.53425,
+          "p95": 88.23989180000001
+        }
+      },
+      "random_ranges_contract/pass_0": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 1536.0,
+          "median": 1536.0,
+          "min": 1536.0,
+          "p95": 1536.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 23626630.0,
+          "median": 23626630.0,
+          "min": 23626630.0,
+          "p95": 23626630.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 960.0,
+          "median": 960.0,
+          "min": 960.0,
+          "p95": 960.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 61.382584,
+          "median": 54.242708,
+          "min": 48.45845599999999,
+          "p95": 60.2139756
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 1009.527583,
+          "median": 891.408125,
+          "min": 748.013584,
+          "p95": 994.995408
+        }
+      },
+      "random_ranges_contract/pass_1": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 1536.0,
+          "median": 1536.0,
+          "min": 1536.0,
+          "p95": 1536.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 23626630.0,
+          "median": 23626630.0,
+          "min": 23626630.0,
+          "p95": 23626630.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 960.0,
+          "median": 960.0,
+          "min": 960.0,
+          "p95": 960.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 2.9224170000000003,
+          "median": 2.358126,
+          "min": 1.557794,
+          "p95": 2.9062256
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 98.583292,
+          "median": 92.053292,
+          "min": 84.932541,
+          "p95": 98.28365020000001
+        }
+      },
+      "sequential_contract_forward/pass_0": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 41378.0,
+          "median": 41378.0,
+          "min": 41378.0,
+          "p95": 41378.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 652860428.0,
+          "median": 652860428.0,
+          "min": 652860428.0,
+          "p95": 652860428.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 26053.0,
+          "median": 26053.0,
+          "min": 26053.0,
+          "p95": 26053.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 1.293125,
+          "median": 1.237166,
+          "min": 1.2249580000000002,
+          "p95": 1.2847081999999999
+        },
+        "storage_frames_per_second": {
+          "count": 5,
+          "max": 472599.00694099395,
+          "median": 470231.2278109876,
+          "min": 462059.94734952966,
+          "p95": 472536.70474451536
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 2736.5275,
+          "median": 2691.744416,
+          "min": 2680.816667,
+          "p95": 2733.6019334000002
+        }
+      },
+      "sequential_contract_forward/pass_1": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 41378.0,
+          "median": 41378.0,
+          "min": 41378.0,
+          "p95": 41378.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 652860428.0,
+          "median": 652860428.0,
+          "min": 652860428.0,
+          "p95": 652860428.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 26053.0,
+          "median": 26053.0,
+          "min": 26053.0,
+          "p95": 26053.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 1.230084,
+          "median": 1.2288329999999998,
+          "min": 1.22075,
+          "p95": 1.2299335999999998
+        },
+        "storage_frames_per_second": {
+          "count": 5,
+          "max": 587208.5281975112,
+          "median": 571389.87879687,
+          "min": 566318.694464792,
+          "p95": 584999.1432545393
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 2263.969875,
+          "median": 2243.39275,
+          "min": 2190.188875,
+          "p95": 2261.6497082
+        }
+      },
+      "sequential_ui_forward/pass_0": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 15502.0,
+          "median": 15502.0,
+          "min": 15502.0,
+          "p95": 15502.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 109306347.0,
+          "median": 109306347.0,
+          "min": 109306347.0,
+          "p95": 109306347.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 8672.0,
+          "median": 8672.0,
+          "min": 8672.0,
+          "p95": 8672.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 0.4740829999999999,
+          "median": 0.40866600000000003,
+          "min": 0.400875,
+          "p95": 0.46661639999999993
+        },
+        "storage_frames_per_second": {
+          "count": 5,
+          "max": 1354541.1314675182,
+          "median": 1277501.5352761815,
+          "min": 1167374.2366264206,
+          "p95": 1350249.7330463314
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 1080.05625,
+          "median": 991.03,
+          "min": 937.537208,
+          "p95": 1067.490325
+        }
+      },
+      "sequential_ui_forward/pass_1": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 15502.0,
+          "median": 15502.0,
+          "min": 15502.0,
+          "p95": 15502.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 109306347.0,
+          "median": 109306347.0,
+          "min": 109306347.0,
+          "p95": 109306347.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 8672.0,
+          "median": 8672.0,
+          "min": 8672.0,
+          "p95": 8672.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 0.597751,
+          "median": 0.40766600000000003,
+          "min": 0.405125,
+          "p95": 0.5639092
+        },
+        "storage_frames_per_second": {
+          "count": 5,
+          "max": 1854874.7408005786,
+          "median": 1845064.601442576,
+          "min": 1401795.2695259931,
+          "p95": 1853131.491405578
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 909.977667,
+          "median": 704.186666,
+          "min": 701.820125,
+          "p95": 898.1179836
+        }
+      },
+      "sequential_ui_reverse/pass_0": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 15502.0,
+          "median": 15502.0,
+          "min": 15502.0,
+          "p95": 15502.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 109306347.0,
+          "median": 109306347.0,
+          "min": 109306347.0,
+          "p95": 109306347.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 8672.0,
+          "median": 8672.0,
+          "min": 8672.0,
+          "p95": 8672.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 0.412583,
+          "median": 0.407708,
+          "min": 0.406833,
+          "p95": 0.4118248
+        },
+        "storage_frames_per_second": {
+          "count": 5,
+          "max": 1802548.0518836798,
+          "median": 1800748.5520742529,
+          "min": 1725000.0104545418,
+          "p95": 1802291.5815633757
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 749.765375,
+          "median": 721.013125,
+          "min": 719.338125,
+          "p95": 744.4298334
+        }
+      },
+      "sequential_ui_reverse/pass_1": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 15502.0,
+          "median": 15502.0,
+          "min": 15502.0,
+          "p95": 15502.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 109306347.0,
+          "median": 109306347.0,
+          "min": 109306347.0,
+          "p95": 109306347.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 8672.0,
+          "median": 8672.0,
+          "min": 8672.0,
+          "p95": 8672.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 0.409875,
+          "median": 0.407959,
+          "min": 0.404793,
+          "p95": 0.409775
+        },
+        "storage_frames_per_second": {
+          "count": 5,
+          "max": 1840685.7223656026,
+          "median": 1832221.581993411,
+          "min": 1824555.1002846928,
+          "p95": 1839448.8331920584
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 712.883375,
+          "median": 709.266042,
+          "min": 706.527667,
+          "p95": 712.5784917999999
+        }
+      }
+    },
+    "cache_0/regular": {
+      "frame_row_offsets_read_ms": {
+        "count": 5,
+        "max": 149.519541,
+        "median": 114.840625,
+        "min": 70.926959,
+        "p95": 147.802366
+      },
+      "random_frames_contract/pass_0": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 1024.0,
+          "median": 1024.0,
+          "min": 1024.0,
+          "p95": 1024.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 371709109.0,
+          "median": 371709109.0,
+          "min": 371709109.0,
+          "p95": 371709109.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 1024.0,
+          "median": 1024.0,
+          "min": 1024.0,
+          "p95": 1024.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 311.28891699999997,
+          "median": 262.242039,
+          "min": 32.083417,
+          "p95": 308.28596699999997
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 22631.5605,
+          "median": 4450.274417,
+          "min": 1204.22475,
+          "p95": 20606.795175
+        }
+      },
+      "random_frames_contract/pass_1": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 1024.0,
+          "median": 1024.0,
+          "min": 1024.0,
+          "p95": 1024.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 371709109.0,
+          "median": 371709109.0,
+          "min": 371709109.0,
+          "p95": 371709109.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 1024.0,
+          "median": 1024.0,
+          "min": 1024.0,
+          "p95": 1024.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 176.559333,
+          "median": 10.833750000000002,
+          "min": 5.760459,
+          "p95": 151.3593412
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 8485.260166,
+          "median": 803.541625,
+          "min": 671.981334,
+          "p95": 7113.793090999999
+        }
+      },
+      "random_frames_ui/pass_0": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 384.0,
+          "median": 384.0,
+          "min": 384.0,
+          "p95": 384.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 60605555.0,
+          "median": 60605555.0,
+          "min": 60605555.0,
+          "p95": 60605555.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 384.0,
+          "median": 384.0,
+          "min": 384.0,
+          "p95": 384.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 100.86141699999999,
+          "median": 68.518166,
+          "min": 62.729083,
+          "p95": 98.3944252
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 7263.801042,
+          "median": 2470.292917,
+          "min": 1305.245084,
+          "p95": 6783.1529586
+        }
+      },
+      "random_frames_ui/pass_1": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 384.0,
+          "median": 384.0,
+          "min": 384.0,
+          "p95": 384.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 60605555.0,
+          "median": 60605555.0,
+          "min": 60605555.0,
+          "p95": 60605555.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 384.0,
+          "median": 384.0,
+          "min": 384.0,
+          "p95": 384.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 68.604834,
+          "median": 2.224417,
+          "min": 1.831459,
+          "p95": 67.2989006
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 7243.500625,
+          "median": 353.920667,
+          "min": 215.573,
+          "p95": 6558.458266799999
+        }
+      },
+      "random_ranges_contract/pass_0": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 512.0,
+          "median": 512.0,
+          "min": 512.0,
+          "p95": 512.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 181037202.0,
+          "median": 181037202.0,
+          "min": 181037202.0,
+          "p95": 181037202.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 512.0,
+          "median": 512.0,
+          "min": 512.0,
+          "p95": 512.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 50.295667,
+          "median": 29.679625000000005,
+          "min": 19.968249999999998,
+          "p95": 47.514167
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 1183.920125,
+          "median": 845.858083,
+          "min": 521.704167,
+          "p95": 1165.2669084
+        }
+      },
+      "random_ranges_contract/pass_1": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 512.0,
+          "median": 512.0,
+          "min": 512.0,
+          "p95": 512.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 181037202.0,
+          "median": 181037202.0,
+          "min": 181037202.0,
+          "p95": 181037202.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 512.0,
+          "median": 512.0,
+          "min": 512.0,
+          "p95": 512.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 47.075458000000005,
+          "median": 41.274125,
+          "min": 5.705915,
+          "p95": 46.8616248
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 1177.581,
+          "median": 735.147958,
+          "min": 321.375042,
+          "p95": 1092.0709084
+        }
+      },
+      "sequential_contract_forward/pass_0": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 13659.0,
+          "median": 13659.0,
+          "min": 13659.0,
+          "p95": 13659.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 4857414205.0,
+          "median": 4857414205.0,
+          "min": 4857414205.0,
+          "p95": 4857414205.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 13659.0,
+          "median": 13659.0,
+          "min": 13659.0,
+          "p95": 13659.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 37.697041999999996,
+          "median": 5.709458,
+          "min": 5.659,
+          "p95": 31.301191599999992
+        },
+        "storage_frames_per_second": {
+          "count": 5,
+          "max": 122732.97271024846,
+          "median": 114736.66627208483,
+          "min": 63920.7194785671,
+          "p95": 121267.48044230127
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 18800.614708,
+          "median": 10522.328042,
+          "min": 9845.450084,
+          "p95": 17325.535183
+        }
+      },
+      "sequential_contract_forward/pass_1": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 13659.0,
+          "median": 13659.0,
+          "min": 13659.0,
+          "p95": 13659.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 4857414205.0,
+          "median": 4857414205.0,
+          "min": 4857414205.0,
+          "p95": 4857414205.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 13659.0,
+          "median": 13659.0,
+          "min": 13659.0,
+          "p95": 13659.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 6.58775,
+          "median": 5.7927100000000005,
+          "min": 5.633834,
+          "p95": 6.452941399999999
+        },
+        "storage_frames_per_second": {
+          "count": 5,
+          "max": 123907.37478252553,
+          "median": 115777.77434011301,
+          "min": 101878.72263571515,
+          "p95": 122384.91136316
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 11831.209208,
+          "median": 10427.519042,
+          "min": 9752.493375,
+          "p95": 11562.2096164
+        }
+      },
+      "sequential_ui_forward/pass_0": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 5120.0,
+          "median": 5120.0,
+          "min": 5120.0,
+          "p95": 5120.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 784102020.0,
+          "median": 784102020.0,
+          "min": 784102020.0,
+          "p95": 784102020.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 5120.0,
+          "median": 5120.0,
+          "min": 5120.0,
+          "p95": 5120.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 2.1577919999999997,
+          "median": 1.9445,
+          "min": 1.886957,
+          "p95": 2.1173835999999997
+        },
+        "storage_frames_per_second": {
+          "count": 5,
+          "max": 396176.1491600272,
+          "median": 375634.5772296137,
+          "min": 325809.951884726,
+          "p95": 393677.0161853462
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 3710.053667,
+          "median": 3223.566916,
+          "min": 3061.119916,
+          "p95": 3684.3520586
+        }
+      },
+      "sequential_ui_forward/pass_1": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 5120.0,
+          "median": 5120.0,
+          "min": 5120.0,
+          "p95": 5120.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 784102020.0,
+          "median": 784102020.0,
+          "min": 784102020.0,
+          "p95": 784102020.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 5120.0,
+          "median": 5120.0,
+          "min": 5120.0,
+          "p95": 5120.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 1.958501,
+          "median": 1.951458,
+          "min": 1.917542,
+          "p95": 1.9572424000000002
+        },
+        "storage_frames_per_second": {
+          "count": 5,
+          "max": 375121.37461772584,
+          "median": 349721.91260114976,
+          "min": 327441.0137325511,
+          "p95": 372668.3932542049
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 3690.474209,
+          "median": 3458.932917,
+          "min": 3227.814875,
+          "p95": 3686.3999756
+        }
+      },
+      "sequential_ui_reverse/pass_0": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 5120.0,
+          "median": 5120.0,
+          "min": 5120.0,
+          "p95": 5120.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 784102020.0,
+          "median": 784102020.0,
+          "min": 784102020.0,
+          "p95": 784102020.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 5120.0,
+          "median": 5120.0,
+          "min": 5120.0,
+          "p95": 5120.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 2.09875,
+          "median": 1.958834,
+          "min": 1.9489180000000002,
+          "p95": 2.0942499999999997
+        },
+        "storage_frames_per_second": {
+          "count": 5,
+          "max": 376260.60056995205,
+          "median": 354694.4432216318,
+          "min": 341329.8077143814,
+          "p95": 373252.6803222419
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 3541.2745,
+          "median": 3410.599708,
+          "min": 3218.057083,
+          "p95": 3534.99855
+        }
+      },
+      "sequential_ui_reverse/pass_1": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 5120.0,
+          "median": 5120.0,
+          "min": 5120.0,
+          "p95": 5120.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 784102020.0,
+          "median": 784102020.0,
+          "min": 784102020.0,
+          "p95": 784102020.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 5120.0,
+          "median": 5120.0,
+          "min": 5120.0,
+          "p95": 5120.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 1.957959,
+          "median": 1.9448740000000002,
+          "min": 1.938501,
+          "p95": 1.9573172
+        },
+        "storage_frames_per_second": {
+          "count": 5,
+          "max": 372479.2067574455,
+          "median": 361068.14142732276,
+          "min": 351670.9948520087,
+          "p95": 372235.59610539314
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 3438.529959,
+          "median": 3350.755375,
+          "min": 3249.624208,
+          "p95": 3434.561784
+        }
+      }
+    },
+    "cache_134217728/hybrid": {
+      "frame_row_offsets_read_ms": {
+        "count": 5,
+        "max": 168.19925,
+        "median": 83.13275,
+        "min": 71.645417,
+        "p95": 166.6824084
+      },
+      "random_frames_contract/pass_0": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 2028.0,
+          "median": 2028.0,
+          "min": 2028.0,
+          "p95": 2028.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 321.0,
+          "median": 321.0,
+          "min": 321.0,
+          "p95": 321.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 17239676.0,
+          "median": 17239676.0,
+          "min": 17239676.0,
+          "p95": 17239676.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 311.0,
+          "median": 311.0,
+          "min": 311.0,
+          "p95": 311.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 224.239251,
+          "median": 1.0613330000000003,
+          "min": 0.8536679999999999,
+          "p95": 223.9236006
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 12805.185333,
+          "median": 117.931,
+          "min": 102.9245,
+          "p95": 12743.214333
+        }
+      },
+      "random_frames_contract/pass_1": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 2048.0,
+          "median": 2048.0,
+          "min": 2048.0,
+          "p95": 2048.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 0.466915,
+          "median": 0.09424999999999999,
+          "min": 0.09287699999999999,
+          "p95": 0.4262408
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 32.644291,
+          "median": 11.138792,
+          "min": 11.031875,
+          "p95": 31.136716200000002
+        }
+      },
+      "random_frames_ui/pass_0": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 758.0,
+          "median": 758.0,
+          "min": 758.0,
+          "p95": 758.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 166.0,
+          "median": 166.0,
+          "min": 166.0,
+          "p95": 166.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 3495942.0,
+          "median": 3495942.0,
+          "min": 3495942.0,
+          "p95": 3495942.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 126.0,
+          "median": 126.0,
+          "min": 126.0,
+          "p95": 126.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 85.96791599999999,
+          "median": 0.468291,
+          "min": 0.38291800000000004,
+          "p95": 85.5373246
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 5133.032458,
+          "median": 27.1925,
+          "min": 23.687708,
+          "p95": 5115.7594332
+        }
+      },
+      "random_frames_ui/pass_1": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 768.0,
+          "median": 768.0,
+          "min": 768.0,
+          "p95": 768.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 0.183375,
+          "median": 0.033542,
+          "min": 0.031874,
+          "p95": 0.16789179999999998
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 14.862792,
+          "median": 4.106625,
+          "min": 3.75575,
+          "p95": 13.887375200000001
+        }
+      },
+      "random_ranges_contract/pass_0": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 1024.0,
+          "median": 1024.0,
+          "min": 1024.0,
+          "p95": 1024.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 66.0,
+          "median": 66.0,
+          "min": 66.0,
+          "p95": 66.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 2248061.0,
+          "median": 2248061.0,
+          "min": 2248061.0,
+          "p95": 2248061.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 64.0,
+          "median": 64.0,
+          "min": 64.0,
+          "p95": 64.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 199.08395699999997,
+          "median": 0.8509159999999999,
+          "min": 0.7629999999999999,
+          "p95": 196.05906579999998
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 2679.521292,
+          "median": 72.489542,
+          "min": 14.849125,
+          "p95": 2628.3090336
+        }
+      },
+      "random_ranges_contract/pass_1": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 1024.0,
+          "median": 1024.0,
+          "min": 1024.0,
+          "p95": 1024.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 0.662874,
+          "median": 0.10179200000000001,
+          "min": 0.08520900000000001,
+          "p95": 0.5991823999999999
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 23.072333,
+          "median": 5.739625,
+          "min": 5.560167,
+          "p95": 21.307374799999998
+        }
+      },
+      "sequential_contract_forward/pass_0": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 27787.0,
+          "median": 27787.0,
+          "min": 27787.0,
+          "p95": 27787.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 59.0,
+          "median": 59.0,
+          "min": 59.0,
+          "p95": 59.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 2376035.0,
+          "median": 2376035.0,
+          "min": 2376035.0,
+          "p95": 2376035.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 59.0,
+          "median": 59.0,
+          "min": 59.0,
+          "p95": 59.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 0.497875,
+          "median": 0.08441799999999998,
+          "min": 0.08224999999999999,
+          "p95": 0.4747502
+        },
+        "storage_frames_per_second": {
+          "count": 5,
+          "max": 8945791.418165257,
+          "median": 7016186.211660901,
+          "min": 452899.87673804024,
+          "p95": 8635478.245878257
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 2959.326209,
+          "median": 332.991834,
+          "min": 298.616,
+          "p95": 2904.1525337999997
+        }
+      },
+      "sequential_contract_forward/pass_1": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 27787.0,
+          "median": 27787.0,
+          "min": 27787.0,
+          "p95": 27787.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 0.10004099999999999,
+          "median": 0.078875,
+          "min": 0.077458,
+          "p95": 0.09959919999999998
+        },
+        "storage_frames_per_second": {
+          "count": 5,
+          "max": 9833587.066919215,
+          "median": 9754600.445694877,
+          "min": 9171089.736056011,
+          "p95": 9829152.706770826
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 302.422917,
+          "median": 286.859375,
+          "min": 285.723833,
+          "p95": 301.8802086
+        }
+      },
+      "sequential_ui_forward/pass_0": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 10406.0,
+          "median": 10406.0,
+          "min": 10406.0,
+          "p95": 10406.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 38.0,
+          "median": 38.0,
+          "min": 38.0,
+          "p95": 38.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 831371.0,
+          "median": 831371.0,
+          "min": 831371.0,
+          "p95": 831371.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 38.0,
+          "median": 38.0,
+          "min": 38.0,
+          "p95": 38.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 0.25875,
+          "median": 0.036084,
+          "min": 0.032126,
+          "p95": 0.24905799999999997
+        },
+        "storage_frames_per_second": {
+          "count": 5,
+          "max": 22523320.59495458,
+          "median": 18394528.922075443,
+          "min": 643845.9271493533,
+          "p95": 22354095.526204716
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 2048.5555,
+          "median": 125.092917,
+          "min": 113.940666,
+          "p95": 1986.9996333999998
+        }
+      },
+      "sequential_ui_forward/pass_1": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 10406.0,
+          "median": 10406.0,
+          "min": 10406.0,
+          "p95": 10406.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 0.06829199999999999,
+          "median": 0.031,
+          "min": 0.030333,
+          "p95": 0.0654254
+        },
+        "storage_frames_per_second": {
+          "count": 5,
+          "max": 25817730.430687256,
+          "median": 25519856.994282752,
+          "min": 20228630.176249623,
+          "p95": 25781796.3864877
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 132.205833,
+          "median": 108.133625,
+          "min": 106.19925,
+          "p95": 129.9695248
+        }
+      },
+      "sequential_ui_reverse/pass_0": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 10406.0,
+          "median": 10406.0,
+          "min": 10406.0,
+          "p95": 10406.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 0.030875,
+          "median": 0.029958,
+          "min": 0.029582999999999998,
+          "p95": 0.030824999999999998
+        },
+        "storage_frames_per_second": {
+          "count": 5,
+          "max": 26103009.815456845,
+          "median": 25880742.020044632,
+          "min": 25506099.081533507,
+          "p95": 26063123.4670554
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 107.234042,
+          "median": 106.744,
+          "min": 106.576666,
+          "p95": 107.2085086
+        }
+      },
+      "sequential_ui_reverse/pass_1": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 10406.0,
+          "median": 10406.0,
+          "min": 10406.0,
+          "p95": 10406.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 0.0305,
+          "median": 0.030416,
+          "min": 0.029708,
+          "p95": 0.0305
+        },
+        "storage_frames_per_second": {
+          "count": 5,
+          "max": 26089246.921589583,
+          "median": 25678227.25819034,
+          "min": 25579425.116200563,
+          "p95": 26048102.71258242
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 107.601792,
+          "median": 106.82875,
+          "min": 106.254792,
+          "p95": 107.5798668
+        }
+      }
+    },
+    "cache_134217728/regular": {
+      "frame_row_offsets_read_ms": {
+        "count": 5,
+        "max": 267.858291,
+        "median": 153.800958,
+        "min": 143.669125,
+        "p95": 245.53702439999998
+      },
+      "random_frames_contract/pass_0": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 974.0,
+          "median": 974.0,
+          "min": 974.0,
+          "p95": 974.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 50.0,
+          "median": 50.0,
+          "min": 50.0,
+          "p95": 50.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 21265717.0,
+          "median": 21265717.0,
+          "min": 21265717.0,
+          "p95": 21265717.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 50.0,
+          "median": 50.0,
+          "min": 50.0,
+          "p95": 50.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 292.035374,
+          "median": 156.44470900000002,
+          "min": 146.713416,
+          "p95": 283.8863662
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 3652.049875,
+          "median": 2495.709167,
+          "min": 2013.759375,
+          "p95": 3646.1612082
+        }
+      },
+      "random_frames_contract/pass_1": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 1024.0,
+          "median": 1024.0,
+          "min": 1024.0,
+          "p95": 1024.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 0.29850099999999996,
+          "median": 0.21087499999999998,
+          "min": 0.201919,
+          "p95": 0.28724239999999995
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 22.959708,
+          "median": 21.297417,
+          "min": 18.969042,
+          "p95": 22.850674799999997
+        }
+      },
+      "random_frames_ui/pass_0": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 356.0,
+          "median": 356.0,
+          "min": 356.0,
+          "p95": 356.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 28.0,
+          "median": 28.0,
+          "min": 28.0,
+          "p95": 28.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 4823302.0,
+          "median": 4823302.0,
+          "min": 4823302.0,
+          "p95": 4823302.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 28.0,
+          "median": 28.0,
+          "min": 28.0,
+          "p95": 28.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 75.128791,
+          "median": 48.925667,
+          "min": 34.283376000000004,
+          "p95": 74.2572992
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 1613.9135,
+          "median": 1019.809708,
+          "min": 698.500458,
+          "p95": 1601.6191832000002
+        }
+      },
+      "random_frames_ui/pass_1": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 384.0,
+          "median": 384.0,
+          "min": 384.0,
+          "p95": 384.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 0.140959,
+          "median": 0.113958,
+          "min": 0.047292,
+          "p95": 0.13790059999999998
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 12.504583,
+          "median": 9.949542,
+          "min": 5.398,
+          "p95": 12.119608
+        }
+      },
+      "random_ranges_contract/pass_0": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 507.0,
+          "median": 507.0,
+          "min": 507.0,
+          "p95": 507.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 5.0,
+          "median": 5.0,
+          "min": 5.0,
+          "p95": 5.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 116100.0,
+          "median": 116100.0,
+          "min": 116100.0,
+          "p95": 116100.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 5.0,
+          "median": 5.0,
+          "min": 5.0,
+          "p95": 5.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 0.6183740000000001,
+          "median": 0.544625,
+          "min": 0.31875,
+          "p95": 0.6062572
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 329.808,
+          "median": 190.363375,
+          "min": 147.740125,
+          "p95": 328.6205332
+        }
+      },
+      "random_ranges_contract/pass_1": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 512.0,
+          "median": 512.0,
+          "min": 512.0,
+          "p95": 512.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 0.39112399999999997,
+          "median": 0.30345799999999995,
+          "min": 0.290708,
+          "p95": 0.3781328
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 16.562,
+          "median": 15.855875,
+          "min": 15.23625,
+          "p95": 16.5294332
+        }
+      },
+      "sequential_contract_forward/pass_0": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 13659.0,
+          "median": 13659.0,
+          "min": 13659.0,
+          "p95": 13659.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 0.078125,
+          "median": 0.077625,
+          "min": 0.076875,
+          "p95": 0.0780998
+        },
+        "storage_frames_per_second": {
+          "count": 5,
+          "max": 9860557.359704578,
+          "median": 9798743.459617063,
+          "min": 9709778.957045443,
+          "p95": 9856189.697060263
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 288.090625,
+          "median": 286.577292,
+          "min": 284.273334,
+          "p95": 287.8854166
+        }
+      },
+      "sequential_contract_forward/pass_1": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 13659.0,
+          "median": 13659.0,
+          "min": 13659.0,
+          "p95": 13659.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 0.119042,
+          "median": 0.076209,
+          "min": 0.075292,
+          "p95": 0.11048339999999998
+        },
+        "storage_frames_per_second": {
+          "count": 5,
+          "max": 9968415.478321202,
+          "median": 9937431.904437972,
+          "min": 8632114.767191974,
+          "p95": 9964568.090816487
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 308.253625,
+          "median": 284.48675,
+          "min": 282.601916,
+          "p95": 303.67055
+        }
+      },
+      "sequential_ui_forward/pass_0": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 5120.0,
+          "median": 5120.0,
+          "min": 5120.0,
+          "p95": 5120.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 0.056,
+          "median": 0.051875000000000004,
+          "min": 0.041666999999999996,
+          "p95": 0.055375
+        },
+        "storage_frames_per_second": {
+          "count": 5,
+          "max": 23993407.87177664,
+          "median": 22402496.950629827,
+          "min": 11615637.953471234,
+          "p95": 23698216.24625155
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 174.797083,
+          "median": 125.191334,
+          "min": 115.534833,
+          "p95": 164.96527479999997
+        }
+      },
+      "sequential_ui_forward/pass_1": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 5120.0,
+          "median": 5120.0,
+          "min": 5120.0,
+          "p95": 5120.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 0.029958000000000002,
+          "median": 0.029625,
+          "min": 0.029292,
+          "p95": 0.0299414
+        },
+        "storage_frames_per_second": {
+          "count": 5,
+          "max": 26168813.65115097,
+          "median": 26024297.054820575,
+          "min": 25828122.324857038,
+          "p95": 26143511.328302592
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 105.667167,
+          "median": 104.742375,
+          "min": 102.915875,
+          "p95": 105.483517
+        }
+      },
+      "sequential_ui_reverse/pass_0": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 5120.0,
+          "median": 5120.0,
+          "min": 5120.0,
+          "p95": 5120.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 0.041124,
+          "median": 0.029293,
+          "min": 0.028957999999999998,
+          "p95": 0.038799200000000006
+        },
+        "storage_frames_per_second": {
+          "count": 5,
+          "max": 26534010.906550612,
+          "median": 26355653.391921565,
+          "min": 24544348.021335065,
+          "p95": 26515048.94718379
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 106.374583,
+          "median": 105.157333,
+          "min": 103.363334,
+          "p95": 106.171908
+        }
+      },
+      "sequential_ui_reverse/pass_1": {
+        "cache_evictions": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "cache_hits": {
+          "count": 5,
+          "max": 5120.0,
+          "median": 5120.0,
+          "min": 5120.0,
+          "p95": 5120.0
+        },
+        "cache_misses": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "file_bytes": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "file_reads": {
+          "count": 5,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0
+        },
+        "p95_unit_ms": {
+          "count": 5,
+          "max": 0.059040999999999996,
+          "median": 0.029251,
+          "min": 0.029082999999999998,
+          "p95": 0.05309939999999999
+        },
+        "storage_frames_per_second": {
+          "count": 5,
+          "max": 26449051.8237556,
+          "median": 26353735.139504813,
+          "min": 21753276.353787627,
+          "p95": 26444193.8116891
+        },
+        "wall_ms": {
+          "count": 5,
+          "max": 117.511583,
+          "median": 104.864875,
+          "min": 103.377417,
+          "p95": 115.1050414
+        }
+      }
+    }
+  }
+}

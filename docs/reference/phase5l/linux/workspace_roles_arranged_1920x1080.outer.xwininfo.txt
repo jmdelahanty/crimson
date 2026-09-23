@@ -1,0 +1,24 @@
+
+xwininfo: Window id: 0x800ef4 "Red"
+
+  Absolute upper-left X:  102
+  Absolute upper-left Y:  313
+  Relative upper-left X:  102
+  Relative upper-left Y:  313
+  Width: 1948
+  Height: 1146
+  Depth: 32
+  Visual: 0x83
+  Visual Class: TrueColor
+  Border width: 0
+  Class: InputOutput
+  Colormap: 0x800001 (not installed)
+  Bit Gravity State: NorthWestGravity
+  Window Gravity State: NorthWestGravity
+  Backing Store State: NotUseful
+  Save Under State: no
+  Map State: IsViewable
+  Override Redirect State: no
+  Corners:  +102+313  -3550+313  -3550-2381  +102-2381
+  -geometry 1948x1146+102+313
+

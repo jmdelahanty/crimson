@@ -1,0 +1,1920 @@
+{
+  "analysis": {
+    "eye_representation": "eye_frame",
+    "ready": false
+  },
+  "archive": "/Volumes/johnsonlab/jeremy/recordings/2026-06-14T21-12-08Z_arena_1_GoodCopBadCop/zarr/2026-06-14T21-12-08Z_arena_1_GoodCopBadCop_analysis.zarr",
+  "buffers": {
+    "camera_capacity": 6,
+    "camera_valid": 6,
+    "stimulus_capacity": 6,
+    "stimulus_valid": 6
+  },
+  "client_size": {
+    "height": 853,
+    "width": 1470
+  },
+  "crop": {
+    "camera_frame": 56,
+    "ready": false,
+    "source": "acquisition-video"
+  },
+  "format": "crimson_ui_reference_v1",
+  "framebuffer_scale": {
+    "x": 1.0,
+    "y": 1.0
+  },
+  "framebuffer_size": {
+    "height": 1080,
+    "width": 1920
+  },
+  "logical_content_size": {
+    "height": 1080,
+    "width": 1920
+  },
+  "overlays": {
+    "counts": {},
+    "ready": false
+  },
+  "platform": "macos-metal",
+  "presented_frame": 56,
+  "rendered_image": {
+    "height": 1080,
+    "path": "/tmp/crimson-phase5l4-macos-final/workspace_exact_f000056_1920x1080.ui-reference.json.png",
+    "surface": "metal_drawable_pre_present",
+    "width": 1920
+  },
+  "requested_frame": 56,
+  "semantic_snapshot": {
+    "display_size": {
+      "height": 1080.0,
+      "width": 1920.0
+    },
+    "frame": 60,
+    "framebuffer_scale": {
+      "x": 1.0,
+      "y": 1.0
+    },
+    "items": [
+      {
+        "bounds": {
+          "height": 19.0,
+          "width": 37.0,
+          "x": 14.0,
+          "y": 32.0
+        },
+        "id": 2193332384,
+        "item_flags": 16,
+        "label": "File",
+        "status_flags": 1048832,
+        "submission_order": 11,
+        "visible_label": "File",
+        "window_name": "File Browser",
+        "window_relative_bounds": {
+          "height": 19.0,
+          "width": 37.0,
+          "x": 4.0,
+          "y": 22.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 278.0,
+          "x": 18.0,
+          "y": 104.0
+        },
+        "id": 702035202,
+        "item_flags": 1115152,
+        "label": "Buffer Size",
+        "status_flags": 16777472,
+        "submission_order": 13,
+        "visible_label": "Buffer Size",
+        "window_name": "File Browser",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 278.0,
+          "x": 8.0,
+          "y": 94.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 21.0,
+          "x": 300.0,
+          "y": 104.0
+        },
+        "id": 754596254,
+        "item_flags": 1048,
+        "label": "-",
+        "status_flags": 256,
+        "submission_order": 14,
+        "visible_label": "-",
+        "window_name": "File Browser",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 21.0,
+          "x": 290.0,
+          "y": 94.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 21.0,
+          "x": 325.0,
+          "y": 104.0
+        },
+        "id": 173792886,
+        "item_flags": 1048,
+        "label": "+",
+        "status_flags": 256,
+        "submission_order": 15,
+        "visible_label": "+",
+        "window_name": "File Browser",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 21.0,
+          "x": 315.0,
+          "y": 94.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 278.0,
+          "x": 18.0,
+          "y": 198.0
+        },
+        "id": 544625829,
+        "item_flags": 1115152,
+        "label": "Stimulus Buffer Size",
+        "status_flags": 16777472,
+        "submission_order": 18,
+        "visible_label": "Stimulus Buffer Size",
+        "window_name": "File Browser",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 278.0,
+          "x": 8.0,
+          "y": 188.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 21.0,
+          "x": 300.0,
+          "y": 198.0
+        },
+        "id": 1517438642,
+        "item_flags": 1048,
+        "label": "-",
+        "status_flags": 256,
+        "submission_order": 19,
+        "visible_label": "-",
+        "window_name": "File Browser",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 21.0,
+          "x": 290.0,
+          "y": 188.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 21.0,
+          "x": 325.0,
+          "y": 198.0
+        },
+        "id": 2094244186,
+        "item_flags": 1048,
+        "label": "+",
+        "status_flags": 256,
+        "submission_order": 20,
+        "visible_label": "+",
+        "window_name": "File Browser",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 21.0,
+          "x": 315.0,
+          "y": 188.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 314.0,
+          "x": 18.0,
+          "y": 359.0
+        },
+        "id": 2791683712,
+        "item_flags": 1115152,
+        "label": "Seek Step",
+        "status_flags": 16777216,
+        "submission_order": 21,
+        "visible_label": "Seek Step",
+        "window_name": "File Browser",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 314.0,
+          "x": 8.0,
+          "y": 349.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 314.0,
+          "x": 18.0,
+          "y": 384.0
+        },
+        "id": 2725312234,
+        "item_flags": 1115152,
+        "label": "Seek Accurate",
+        "status_flags": 16777216,
+        "submission_order": 24,
+        "visible_label": "Seek Accurate",
+        "window_name": "File Browser",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 314.0,
+          "x": 8.0,
+          "y": 374.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 111.0,
+          "x": 18.0,
+          "y": 343.0
+        },
+        "id": 1525709479,
+        "item_flags": 1040,
+        "label": "Show ROI inset",
+        "status_flags": 12583168,
+        "submission_order": 35,
+        "visible_label": "Show ROI inset",
+        "window_name": "Frame Inspect",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 111.0,
+          "x": 8.0,
+          "y": 73.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 60.0,
+          "x": 137.0,
+          "y": 343.0
+        },
+        "id": 139428753,
+        "item_flags": 1040,
+        "label": "Mirror",
+        "status_flags": 12583168,
+        "submission_order": 36,
+        "visible_label": "Mirror",
+        "window_name": "Frame Inspect",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 60.0,
+          "x": 127.0,
+          "y": 73.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 56.0,
+          "x": 205.0,
+          "y": 343.0
+        },
+        "id": 3729950025,
+        "item_flags": 1040,
+        "label": "Label",
+        "status_flags": 12583168,
+        "submission_order": 37,
+        "visible_label": "Label",
+        "window_name": "Frame Inspect",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 56.0,
+          "x": 195.0,
+          "y": 73.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 130.0,
+          "x": 18.0,
+          "y": 368.0
+        },
+        "id": 2620373404,
+        "item_flags": 1049616,
+        "label": "Inset width",
+        "status_flags": 16777472,
+        "submission_order": 38,
+        "visible_label": "Inset width",
+        "window_name": "Frame Inspect",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 130.0,
+          "x": 8.0,
+          "y": 98.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 132.0,
+          "x": 18.0,
+          "y": 393.0
+        },
+        "id": 3978009712,
+        "item_flags": 1040,
+        "label": "Normalize heading",
+        "status_flags": 4194560,
+        "submission_order": 39,
+        "visible_label": "Normalize heading",
+        "window_name": "Frame Inspect",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 132.0,
+          "x": 8.0,
+          "y": 123.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 160.0,
+          "x": 18.0,
+          "y": 418.0
+        },
+        "id": 3910074607,
+        "item_flags": 1040,
+        "label": "Advanced Crop Preview",
+        "status_flags": 4194560,
+        "submission_order": 40,
+        "visible_label": "Advanced Crop Preview",
+        "window_name": "Frame Inspect",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 160.0,
+          "x": 8.0,
+          "y": 148.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 140.0,
+          "x": 18.0,
+          "y": 468.0
+        },
+        "id": 2206495097,
+        "item_flags": 1040,
+        "label": "Show stimulus inset",
+        "status_flags": 12583168,
+        "submission_order": 41,
+        "visible_label": "Show stimulus inset",
+        "window_name": "Frame Inspect",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 140.0,
+          "x": 8.0,
+          "y": 198.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 168.0,
+          "x": 166.0,
+          "y": 468.0
+        },
+        "id": 2579587188,
+        "item_flags": 1040,
+        "label": "Stimulus debug windows",
+        "status_flags": 4194560,
+        "submission_order": 42,
+        "visible_label": "Stimulus debug windows",
+        "window_name": "Frame Inspect",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 168.0,
+          "x": 156.0,
+          "y": 198.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 140.0,
+          "x": 18.0,
+          "y": 493.0
+        },
+        "id": 2207663886,
+        "item_flags": 1049616,
+        "label": "Stimulus inset width",
+        "status_flags": 16777472,
+        "submission_order": 43,
+        "visible_label": "Stimulus inset width",
+        "window_name": "Frame Inspect",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 140.0,
+          "x": 8.0,
+          "y": 223.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 140.0,
+          "x": 18.0,
+          "y": 518.0
+        },
+        "id": 2026842971,
+        "item_flags": 1049616,
+        "label": "Stimulus inset opacity",
+        "status_flags": 16777472,
+        "submission_order": 44,
+        "visible_label": "Stimulus inset opacity",
+        "window_name": "Frame Inspect",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 140.0,
+          "x": 8.0,
+          "y": 248.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 143.0,
+          "x": 18.0,
+          "y": 543.0
+        },
+        "id": 3444317351,
+        "item_flags": 1040,
+        "label": "Stimulus frame label",
+        "status_flags": 12583168,
+        "submission_order": 45,
+        "visible_label": "Stimulus frame label",
+        "window_name": "Frame Inspect",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 143.0,
+          "x": 8.0,
+          "y": 273.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 123.0,
+          "x": 99.0,
+          "y": 568.0
+        },
+        "id": 1559334574,
+        "item_flags": 1040,
+        "label": "Acquisition video",
+        "status_flags": 256,
+        "submission_order": 46,
+        "visible_label": "Acquisition video",
+        "window_name": "Frame Inspect",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 123.0,
+          "x": 89.0,
+          "y": 298.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 105.0,
+          "x": 230.0,
+          "y": 568.0
+        },
+        "id": 3116939826,
+        "item_flags": 1040,
+        "label": "Live geometry",
+        "status_flags": 256,
+        "submission_order": 47,
+        "visible_label": "Live geometry",
+        "window_name": "Frame Inspect",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 105.0,
+          "x": 220.0,
+          "y": 298.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 128.0,
+          "x": 18.0,
+          "y": 698.0
+        },
+        "id": 615065065,
+        "item_flags": 1040,
+        "label": " Prev Review Frame",
+        "status_flags": 256,
+        "submission_order": 49,
+        "visible_label": " Prev Review Frame",
+        "window_name": "Frame Inspect",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 128.0,
+          "x": 8.0,
+          "y": 428.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 129.0,
+          "x": 154.0,
+          "y": 698.0
+        },
+        "id": 819373899,
+        "item_flags": 1040,
+        "label": "Next Review Frame ",
+        "status_flags": 256,
+        "submission_order": 50,
+        "visible_label": "Next Review Frame ",
+        "window_name": "Frame Inspect",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 129.0,
+          "x": 144.0,
+          "y": 428.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 168.0,
+          "x": 18.0,
+          "y": 746.0
+        },
+        "id": 811736122,
+        "item_flags": 1040,
+        "label": "Enable bbox draw editing",
+        "status_flags": 4194560,
+        "submission_order": 51,
+        "visible_label": "Enable bbox draw editing",
+        "window_name": "Frame Inspect",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 168.0,
+          "x": 8.0,
+          "y": 476.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 88.0,
+          "x": 18.0,
+          "y": 771.0
+        },
+        "id": 1287035414,
+        "item_flags": 1040,
+        "label": "Run Detection",
+        "status_flags": 256,
+        "submission_order": 52,
+        "visible_label": "Run Detection",
+        "window_name": "Frame Inspect",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 88.0,
+          "x": 8.0,
+          "y": 501.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 90.0,
+          "x": 18.0,
+          "y": 821.0
+        },
+        "id": 493206334,
+        "item_flags": 1040,
+        "label": "Motion trail",
+        "status_flags": 12583168,
+        "submission_order": 56,
+        "visible_label": "Motion trail",
+        "window_name": "Frame Inspect",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 90.0,
+          "x": 8.0,
+          "y": 551.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 140.0,
+          "x": 18.0,
+          "y": 846.0
+        },
+        "id": 615433614,
+        "item_flags": 1049616,
+        "label": "Trail duration",
+        "status_flags": 16777472,
+        "submission_order": 57,
+        "visible_label": "Trail duration",
+        "window_name": "Frame Inspect",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 140.0,
+          "x": 8.0,
+          "y": 576.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 132.0,
+          "x": 18.0,
+          "y": 871.0
+        },
+        "id": 580774961,
+        "item_flags": 1040,
+        "label": "Valid samples only",
+        "status_flags": 12583168,
+        "submission_order": 58,
+        "visible_label": "Valid samples only",
+        "window_name": "Frame Inspect",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 132.0,
+          "x": 8.0,
+          "y": 601.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 86.0,
+          "x": 18.0,
+          "y": 896.0
+        },
+        "id": 3645872105,
+        "item_flags": 1040,
+        "label": "Polar inset",
+        "status_flags": 12583168,
+        "submission_order": 59,
+        "visible_label": "Polar inset",
+        "window_name": "Frame Inspect",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 86.0,
+          "x": 8.0,
+          "y": 626.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 19.0,
+          "width": 492.0,
+          "x": 899.0,
+          "y": 117.0
+        },
+        "id": 4135986839,
+        "item_flags": 16,
+        "label": "Frame 56",
+        "status_flags": 256,
+        "submission_order": 79,
+        "visible_label": "Frame 56",
+        "window_name": "Frames in the buffer",
+        "window_relative_bounds": {
+          "height": 19.0,
+          "width": 492.0,
+          "x": 4.0,
+          "y": 107.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 19.0,
+          "width": 492.0,
+          "x": 899.0,
+          "y": 136.0
+        },
+        "id": 82683284,
+        "item_flags": 16,
+        "label": "Frame 57",
+        "status_flags": 256,
+        "submission_order": 80,
+        "visible_label": "Frame 57",
+        "window_name": "Frames in the buffer",
+        "window_relative_bounds": {
+          "height": 19.0,
+          "width": 492.0,
+          "x": 4.0,
+          "y": 126.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 19.0,
+          "width": 492.0,
+          "x": 899.0,
+          "y": 155.0
+        },
+        "id": 1526634928,
+        "item_flags": 16,
+        "label": "Frame 58",
+        "status_flags": 256,
+        "submission_order": 81,
+        "visible_label": "Frame 58",
+        "window_name": "Frames in the buffer",
+        "window_relative_bounds": {
+          "height": 19.0,
+          "width": 492.0,
+          "x": 4.0,
+          "y": 145.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 19.0,
+          "width": 492.0,
+          "x": 899.0,
+          "y": 174.0
+        },
+        "id": 2828343987,
+        "item_flags": 16,
+        "label": "Frame 59",
+        "status_flags": 256,
+        "submission_order": 82,
+        "visible_label": "Frame 59",
+        "window_name": "Frames in the buffer",
+        "window_relative_bounds": {
+          "height": 19.0,
+          "width": 492.0,
+          "x": 4.0,
+          "y": 164.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 19.0,
+          "width": 492.0,
+          "x": 899.0,
+          "y": 193.0
+        },
+        "id": 3837815270,
+        "item_flags": 16,
+        "label": "Frame 60",
+        "status_flags": 256,
+        "submission_order": 83,
+        "visible_label": "Frame 60",
+        "window_name": "Frames in the buffer",
+        "window_relative_bounds": {
+          "height": 19.0,
+          "width": 492.0,
+          "x": 4.0,
+          "y": 183.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 19.0,
+          "width": 492.0,
+          "x": 899.0,
+          "y": 212.0
+        },
+        "id": 380365541,
+        "item_flags": 16,
+        "label": "Frame 61",
+        "status_flags": 256,
+        "submission_order": 84,
+        "visible_label": "Frame 61",
+        "window_name": "Frames in the buffer",
+        "window_relative_bounds": {
+          "height": 19.0,
+          "width": 492.0,
+          "x": 4.0,
+          "y": 202.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 338.0,
+          "width": 484.0,
+          "x": 903.0,
+          "y": 349.0
+        },
+        "id": 66784757,
+        "item_flags": 1042,
+        "label": "##camera-presentation",
+        "status_flags": 256,
+        "submission_order": 93,
+        "visible_label": "",
+        "window_name": "Cam2010093_2026-06-14T21-12-08Z_arena_1###crimson-camera-view-v2",
+        "window_relative_bounds": {
+          "height": 338.0,
+          "width": 484.0,
+          "x": 8.0,
+          "y": 29.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 22.0,
+          "x": 903.0,
+          "y": 691.0
+        },
+        "id": 2372453217,
+        "item_flags": 1040,
+        "label": "",
+        "status_flags": 256,
+        "submission_order": 94,
+        "visible_label": "",
+        "window_name": "Cam2010093_2026-06-14T21-12-08Z_arena_1###crimson-camera-view-v2",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 22.0,
+          "x": 8.0,
+          "y": 371.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 16.0,
+          "x": 929.0,
+          "y": 691.0
+        },
+        "id": 2130919522,
+        "item_flags": 1040,
+        "label": "",
+        "status_flags": 256,
+        "submission_order": 95,
+        "visible_label": "",
+        "window_name": "Cam2010093_2026-06-14T21-12-08Z_arena_1###crimson-camera-view-v2",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 16.0,
+          "x": 34.0,
+          "y": 371.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 19.0,
+          "x": 949.0,
+          "y": 691.0
+        },
+        "id": 1817424790,
+        "item_flags": 1040,
+        "label": "",
+        "status_flags": 256,
+        "submission_order": 96,
+        "visible_label": "",
+        "window_name": "Cam2010093_2026-06-14T21-12-08Z_arena_1###crimson-camera-view-v2",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 19.0,
+          "x": 54.0,
+          "y": 371.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 16.0,
+          "x": 972.0,
+          "y": 691.0
+        },
+        "id": 401562817,
+        "item_flags": 1040,
+        "label": "",
+        "status_flags": 256,
+        "submission_order": 97,
+        "visible_label": "",
+        "window_name": "Cam2010093_2026-06-14T21-12-08Z_arena_1###crimson-camera-view-v2",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 16.0,
+          "x": 77.0,
+          "y": 371.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 22.0,
+          "x": 992.0,
+          "y": 691.0
+        },
+        "id": 3850690498,
+        "item_flags": 1040,
+        "label": "",
+        "status_flags": 256,
+        "submission_order": 98,
+        "visible_label": "",
+        "window_name": "Cam2010093_2026-06-14T21-12-08Z_arena_1###crimson-camera-view-v2",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 22.0,
+          "x": 97.0,
+          "y": 371.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 281.0,
+          "x": 1022.0,
+          "y": 691.0
+        },
+        "id": 513859276,
+        "item_flags": 1049616,
+        "label": "##timeline",
+        "status_flags": 16777472,
+        "submission_order": 99,
+        "visible_label": "",
+        "window_name": "Cam2010093_2026-06-14T21-12-08Z_arena_1###crimson-camera-view-v2",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 281.0,
+          "x": 127.0,
+          "y": 371.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 160.0,
+          "x": 1413.0,
+          "y": 39.0
+        },
+        "id": 1095364805,
+        "item_flags": 1049616,
+        "label": "Scrolling Window (+/- s)",
+        "status_flags": 16777472,
+        "submission_order": 109,
+        "visible_label": "Scrolling Window (+/- s)",
+        "window_name": "Stimulus Event Timeline",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 160.0,
+          "x": 8.0,
+          "y": 29.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 155.0,
+          "x": 1413.0,
+          "y": 85.0
+        },
+        "id": 2290910324,
+        "item_flags": 1040,
+        "label": "PROTOCOL_START (1)##type-0",
+        "status_flags": 12583168,
+        "submission_order": 110,
+        "visible_label": "PROTOCOL_START (1)",
+        "window_name": "Stimulus Event Timeline",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 155.0,
+          "x": 8.0,
+          "y": 75.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 148.0,
+          "x": 1572.0,
+          "y": 85.0
+        },
+        "id": 242669500,
+        "item_flags": 1040,
+        "label": "PROTOCOL_STOP (1)##type-1",
+        "status_flags": 12583168,
+        "submission_order": 111,
+        "visible_label": "PROTOCOL_STOP (1)",
+        "window_name": "Stimulus Event Timeline",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 148.0,
+          "x": 167.0,
+          "y": 75.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 156.0,
+          "x": 1731.0,
+          "y": 85.0
+        },
+        "id": 1784471074,
+        "item_flags": 1040,
+        "label": "PROTOCOL_FINISH (1)##type-4",
+        "status_flags": 12583168,
+        "submission_order": 112,
+        "visible_label": "PROTOCOL_FINISH (1)",
+        "window_name": "Stimulus Event Timeline",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 156.0,
+          "x": 326.0,
+          "y": 75.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 120.0,
+          "x": 1413.0,
+          "y": 110.0
+        },
+        "id": 344419290,
+        "item_flags": 1040,
+        "label": "STEP_START (1)##type-11",
+        "status_flags": 12583168,
+        "submission_order": 113,
+        "visible_label": "STEP_START (1)",
+        "window_name": "Stimulus Event Timeline",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 120.0,
+          "x": 8.0,
+          "y": 100.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 106.0,
+          "x": 1572.0,
+          "y": 110.0
+        },
+        "id": 2289218201,
+        "item_flags": 1040,
+        "label": "STEP_END (1)##type-12",
+        "status_flags": 12583168,
+        "submission_order": 114,
+        "visible_label": "STEP_END (1)",
+        "window_name": "Stimulus Event Timeline",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 106.0,
+          "x": 167.0,
+          "y": 100.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 133.0,
+          "x": 1731.0,
+          "y": 110.0
+        },
+        "id": 1059472912,
+        "item_flags": 1040,
+        "label": "LOG_MESSAGE (1)##type-22",
+        "status_flags": 12583168,
+        "submission_order": 115,
+        "visible_label": "LOG_MESSAGE (1)",
+        "window_name": "Stimulus Event Timeline",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 133.0,
+          "x": 326.0,
+          "y": 100.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 217.0,
+          "x": 1413.0,
+          "y": 135.0
+        },
+        "id": 2307042172,
+        "item_flags": 1040,
+        "label": "CHASER_PRE_PERIOD_START (1)##type-24",
+        "status_flags": 12583168,
+        "submission_order": 116,
+        "visible_label": "CHASER_PRE_PERIOD_START (1)",
+        "window_name": "Stimulus Event Timeline",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 217.0,
+          "x": 8.0,
+          "y": 125.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 202.0,
+          "x": 1572.0,
+          "y": 135.0
+        },
+        "id": 91152450,
+        "item_flags": 1040,
+        "label": "CHASER_TRAINING_START (1)##type-25",
+        "status_flags": 12583168,
+        "submission_order": 117,
+        "visible_label": "CHASER_TRAINING_START (1)",
+        "window_name": "Stimulus Event Timeline",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 202.0,
+          "x": 167.0,
+          "y": 125.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 226.0,
+          "x": 1731.0,
+          "y": 135.0
+        },
+        "id": 460737767,
+        "item_flags": 1040,
+        "label": "CHASER_POST_PERIOD_START (1)##type-26",
+        "status_flags": 12583168,
+        "submission_order": 118,
+        "visible_label": "CHASER_POST_PERIOD_START (1)",
+        "window_name": "Stimulus Event Timeline",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 226.0,
+          "x": 326.0,
+          "y": 125.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 261.0,
+          "x": 1413.0,
+          "y": 160.0
+        },
+        "id": 2586085111,
+        "item_flags": 1040,
+        "label": "CHASER_CHASE_SEQUENCE_START (10)##type-27",
+        "status_flags": 12583168,
+        "submission_order": 119,
+        "visible_label": "CHASER_CHASE_SEQUENCE_START (10)",
+        "window_name": "Stimulus Event Timeline",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 261.0,
+          "x": 8.0,
+          "y": 150.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 247.0,
+          "x": 1572.0,
+          "y": 160.0
+        },
+        "id": 4278080273,
+        "item_flags": 1040,
+        "label": "CHASER_CHASE_SEQUENCE_END (10)##type-28",
+        "status_flags": 12583168,
+        "submission_order": 120,
+        "visible_label": "CHASER_CHASE_SEQUENCE_END (10)",
+        "window_name": "Stimulus Event Timeline",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 247.0,
+          "x": 167.0,
+          "y": 150.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 280.0,
+          "x": 1731.0,
+          "y": 160.0
+        },
+        "id": 308012998,
+        "item_flags": 1040,
+        "label": "CHASER_POSITION_TRANSITION_START (1)##type-29",
+        "status_flags": 12583168,
+        "submission_order": 121,
+        "visible_label": "CHASER_POSITION_TRANSITION_START (1)",
+        "window_name": "Stimulus Event Timeline",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 280.0,
+          "x": 326.0,
+          "y": 150.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 265.0,
+          "x": 1413.0,
+          "y": 185.0
+        },
+        "id": 674530128,
+        "item_flags": 1040,
+        "label": "CHASER_POSITION_TRANSITION_END (1)##type-30",
+        "status_flags": 12583168,
+        "submission_order": 122,
+        "visible_label": "CHASER_POSITION_TRANSITION_END (1)",
+        "window_name": "Stimulus Event Timeline",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 265.0,
+          "x": 8.0,
+          "y": 175.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 207.0,
+          "x": 1572.0,
+          "y": 185.0
+        },
+        "id": 1843409191,
+        "item_flags": 1040,
+        "label": "CHASER_AT_PRE_POSITION (1)##type-31",
+        "status_flags": 12583168,
+        "submission_order": 123,
+        "visible_label": "CHASER_AT_PRE_POSITION (1)",
+        "window_name": "Stimulus Event Timeline",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 207.0,
+          "x": 167.0,
+          "y": 175.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 216.0,
+          "x": 1731.0,
+          "y": 185.0
+        },
+        "id": 309630821,
+        "item_flags": 1040,
+        "label": "CHASER_AT_POST_POSITION (1)##type-32",
+        "status_flags": 12583168,
+        "submission_order": 124,
+        "visible_label": "CHASER_AT_POST_POSITION (1)",
+        "window_name": "Stimulus Event Timeline",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 216.0,
+          "x": 326.0,
+          "y": 175.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 195.0,
+          "x": 1413.0,
+          "y": 210.0
+        },
+        "id": 2896554720,
+        "item_flags": 1040,
+        "label": "CHASER_APPROACHING (10)##type-35",
+        "status_flags": 12583168,
+        "submission_order": 125,
+        "visible_label": "CHASER_APPROACHING (10)",
+        "window_name": "Stimulus Event Timeline",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 195.0,
+          "x": 8.0,
+          "y": 200.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 236.0,
+          "x": 1572.0,
+          "y": 210.0
+        },
+        "id": 856904648,
+        "item_flags": 1040,
+        "label": "CHASER_PRESENTATION_START (1)##type-87",
+        "status_flags": 12583168,
+        "submission_order": 126,
+        "visible_label": "CHASER_PRESENTATION_START (1)",
+        "window_name": "Stimulus Event Timeline",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 236.0,
+          "x": 167.0,
+          "y": 200.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 222.0,
+          "x": 1731.0,
+          "y": 210.0
+        },
+        "id": 3185803607,
+        "item_flags": 1040,
+        "label": "CHASER_PRESENTATION_END (1)##type-88",
+        "status_flags": 12583168,
+        "submission_order": 127,
+        "visible_label": "CHASER_PRESENTATION_END (1)",
+        "window_name": "Stimulus Event Timeline",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 222.0,
+          "x": 326.0,
+          "y": 200.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 354.0,
+          "x": 1413.0,
+          "y": 235.0
+        },
+        "id": 3689061735,
+        "item_flags": 1040,
+        "label": "CHASER_TARGET_OUTSIDE_EXPERIMENTAL_AREA (470)##type-103",
+        "status_flags": 12583168,
+        "submission_order": 128,
+        "visible_label": "CHASER_TARGET_OUTSIDE_EXPERIMENTAL_AREA (470)",
+        "window_name": "Stimulus Event Timeline",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 354.0,
+          "x": 8.0,
+          "y": 225.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 389.0,
+          "x": 1572.0,
+          "y": 235.0
+        },
+        "id": 3318298498,
+        "item_flags": 1040,
+        "label": "CHASER_TARGET_RETURNED_TO_EXPERIMENTAL_AREA (469)##type-104",
+        "status_flags": 12583168,
+        "submission_order": 129,
+        "visible_label": "CHASER_TARGET_RETURNED_TO_EXPERIMENTAL_AREA (469)",
+        "window_name": "Stimulus Event Timeline",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 389.0,
+          "x": 167.0,
+          "y": 225.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 150.0,
+          "width": 470.0,
+          "x": 1413.0,
+          "y": 262.0
+        },
+        "id": 834929232,
+        "item_flags": 1042,
+        "label": "##stimulus-context-full",
+        "status_flags": 256,
+        "submission_order": 130,
+        "visible_label": "",
+        "window_name": "Stimulus Event Timeline",
+        "window_relative_bounds": {
+          "height": 150.0,
+          "width": 470.0,
+          "x": 8.0,
+          "y": 252.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 150.0,
+          "width": 470.0,
+          "x": 1413.0,
+          "y": 416.0
+        },
+        "id": 2484360901,
+        "item_flags": 0,
+        "label": "Stimulus Event Timeline/##stimulus-event-list_4D5835F7",
+        "status_flags": 0,
+        "submission_order": 131,
+        "visible_label": "Stimulus Event Timeline/",
+        "window_name": "Stimulus Event Timeline",
+        "window_relative_bounds": {
+          "height": 150.0,
+          "width": 470.0,
+          "x": 8.0,
+          "y": 406.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 19.0,
+          "width": 448.0,
+          "x": 1417.0,
+          "y": 422.0
+        },
+        "id": 1236808456,
+        "item_flags": 1040,
+        "label": "1022  PROTOCOL_START - GoodCopBadCop##stimulus-event-0",
+        "status_flags": 256,
+        "submission_order": 133,
+        "visible_label": "1022  PROTOCOL_START - GoodCopBadCop",
+        "window_name": "Stimulus Event Timeline",
+        "window_relative_bounds": {
+          "height": 19.0,
+          "width": 448.0,
+          "x": 12.0,
+          "y": 412.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 19.0,
+          "width": 448.0,
+          "x": 1417.0,
+          "y": 441.0
+        },
+        "id": 2610886136,
+        "item_flags": 1040,
+        "label": "1024  STEP_START - Chaser##stimulus-event-1",
+        "status_flags": 256,
+        "submission_order": 134,
+        "visible_label": "1024  STEP_START - Chaser",
+        "window_name": "Stimulus Event Timeline",
+        "window_relative_bounds": {
+          "height": 19.0,
+          "width": 448.0,
+          "x": 12.0,
+          "y": 431.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 19.0,
+          "width": 448.0,
+          "x": 1417.0,
+          "y": 460.0
+        },
+        "id": 1286301937,
+        "item_flags": 1040,
+        "label": "1024  CHASER_PRE_PERIOD_START - Chaser##stimulus-event-2",
+        "status_flags": 256,
+        "submission_order": 135,
+        "visible_label": "1024  CHASER_PRE_PERIOD_START - Chaser",
+        "window_name": "Stimulus Event Timeline",
+        "window_relative_bounds": {
+          "height": 19.0,
+          "width": 448.0,
+          "x": 12.0,
+          "y": 450.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 19.0,
+          "width": 448.0,
+          "x": 1417.0,
+          "y": 479.0
+        },
+        "id": 3215696763,
+        "item_flags": 1040,
+        "label": "1024  CHASER_AT_PRE_POSITION - Chaser##stimulus-event-3",
+        "status_flags": 256,
+        "submission_order": 136,
+        "visible_label": "1024  CHASER_AT_PRE_POSITION - Chaser",
+        "window_name": "Stimulus Event Timeline",
+        "window_relative_bounds": {
+          "height": 19.0,
+          "width": 448.0,
+          "x": 12.0,
+          "y": 469.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 150.0,
+          "x": 1413.0,
+          "y": 529.0
+        },
+        "id": 2050604370,
+        "item_flags": 1049616,
+        "label": "Span",
+        "status_flags": 16777472,
+        "submission_order": 1126,
+        "visible_label": "Span",
+        "window_name": "Analysis Timeline",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 150.0,
+          "x": 8.0,
+          "y": 29.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 121.0,
+          "x": 1604.0,
+          "y": 529.0
+        },
+        "id": 626638468,
+        "item_flags": 1040,
+        "label": "Stimulus context",
+        "status_flags": 12583168,
+        "submission_order": 1127,
+        "visible_label": "Stimulus context",
+        "window_name": "Analysis Timeline",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 121.0,
+          "x": 199.0,
+          "y": 29.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 78.0,
+          "width": 484.0,
+          "x": 1413.0,
+          "y": 579.0
+        },
+        "id": 912294065,
+        "item_flags": 1042,
+        "label": "##motion-stimulus-context",
+        "status_flags": 256,
+        "submission_order": 1129,
+        "visible_label": "",
+        "window_name": "Analysis Timeline",
+        "window_relative_bounds": {
+          "height": 78.0,
+          "width": 484.0,
+          "x": 8.0,
+          "y": 79.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 90.0,
+          "x": 1413.0,
+          "y": 711.0
+        },
+        "id": 117149414,
+        "item_flags": 1040,
+        "label": "Bout spans",
+        "status_flags": 12583168,
+        "submission_order": 1132,
+        "visible_label": "Bout spans",
+        "window_name": "Analysis Timeline",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 90.0,
+          "x": 8.0,
+          "y": 211.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 130.0,
+          "x": 1511.0,
+          "y": 711.0
+        },
+        "id": 3801645294,
+        "item_flags": 1040,
+        "label": "Detector response",
+        "status_flags": 12583168,
+        "submission_order": 1133,
+        "visible_label": "Detector response",
+        "window_name": "Analysis Timeline",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 130.0,
+          "x": 106.0,
+          "y": 211.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 107.0,
+          "x": 1413.0,
+          "y": 738.0
+        },
+        "id": 412245914,
+        "item_flags": 1040,
+        "label": "Filtered Speed",
+        "status_flags": 12583168,
+        "submission_order": 1134,
+        "visible_label": "Filtered Speed",
+        "window_name": "Analysis Timeline",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 107.0,
+          "x": 8.0,
+          "y": 238.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 89.0,
+          "x": 1659.0,
+          "y": 738.0
+        },
+        "id": 3929985528,
+        "item_flags": 1040,
+        "label": "Raw Speed",
+        "status_flags": 4194560,
+        "submission_order": 1135,
+        "visible_label": "Raw Speed",
+        "window_name": "Analysis Timeline",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 89.0,
+          "x": 254.0,
+          "y": 238.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 101.0,
+          "x": 1413.0,
+          "y": 763.0
+        },
+        "id": 23613651,
+        "item_flags": 1040,
+        "label": "Raw Heading",
+        "status_flags": 4194560,
+        "submission_order": 1136,
+        "visible_label": "Raw Heading",
+        "window_name": "Analysis Timeline",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 101.0,
+          "x": 8.0,
+          "y": 263.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 135.0,
+          "x": 1659.0,
+          "y": 763.0
+        },
+        "id": 3995757213,
+        "item_flags": 1040,
+        "label": "Smoothed Heading",
+        "status_flags": 12583168,
+        "submission_order": 1137,
+        "visible_label": "Smoothed Heading",
+        "window_name": "Analysis Timeline",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 135.0,
+          "x": 254.0,
+          "y": 263.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 83.0,
+          "x": 1413.0,
+          "y": 788.0
+        },
+        "id": 69410858,
+        "item_flags": 1040,
+        "label": "X Position",
+        "status_flags": 12583168,
+        "submission_order": 1138,
+        "visible_label": "X Position",
+        "window_name": "Analysis Timeline",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 83.0,
+          "x": 8.0,
+          "y": 288.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 83.0,
+          "x": 1659.0,
+          "y": 788.0
+        },
+        "id": 3480574863,
+        "item_flags": 1040,
+        "label": "Y Position",
+        "status_flags": 12583168,
+        "submission_order": 1139,
+        "visible_label": "Y Position",
+        "window_name": "Analysis Timeline",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 83.0,
+          "x": 254.0,
+          "y": 288.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 237.0,
+          "width": 484.0,
+          "x": 1413.0,
+          "y": 815.0
+        },
+        "id": 563106339,
+        "item_flags": 0,
+        "label": "Analysis Timeline/##series-plots_4E57676B",
+        "status_flags": 0,
+        "submission_order": 1140,
+        "visible_label": "Analysis Timeline/",
+        "window_name": "Analysis Timeline",
+        "window_relative_bounds": {
+          "height": 237.0,
+          "width": 484.0,
+          "x": 8.0,
+          "y": 315.0
+        }
+      }
+    ],
+    "schema": "crimson.imgui_semantic_snapshot.v1",
+    "windows": [
+      {
+        "begin_order": 1,
+        "bounds": {
+          "height": 250.0,
+          "width": 560.0,
+          "x": 10.0,
+          "y": 10.0
+        },
+        "collapsed": false,
+        "name": "File Browser",
+        "parent_name": "",
+        "visible_name": "File Browser"
+      },
+      {
+        "begin_order": 2,
+        "bounds": {
+          "height": 800.0,
+          "width": 760.0,
+          "x": 10.0,
+          "y": 270.0
+        },
+        "collapsed": false,
+        "name": "Frame Inspect",
+        "parent_name": "",
+        "visible_name": "Frame Inspect"
+      },
+      {
+        "begin_order": 3,
+        "bounds": {
+          "height": 250.0,
+          "width": 305.0,
+          "x": 580.0,
+          "y": 10.0
+        },
+        "collapsed": false,
+        "name": "Diagnostics",
+        "parent_name": "",
+        "visible_name": "Diagnostics"
+      },
+      {
+        "begin_order": 4,
+        "bounds": {
+          "height": 300.0,
+          "width": 500.0,
+          "x": 895.0,
+          "y": 10.0
+        },
+        "collapsed": false,
+        "name": "Frames in the buffer",
+        "parent_name": "",
+        "visible_name": "Frames in the buffer"
+      },
+      {
+        "begin_order": 5,
+        "bounds": {
+          "height": 400.0,
+          "width": 500.0,
+          "x": 895.0,
+          "y": 320.0
+        },
+        "collapsed": false,
+        "name": "Cam2010093_2026-06-14T21-12-08Z_arena_1###crimson-camera-view-v2",
+        "parent_name": "",
+        "visible_name": "Cam2010093_2026-06-14T21-12-08Z_arena_1"
+      },
+      {
+        "begin_order": 6,
+        "bounds": {
+          "height": 480.0,
+          "width": 500.0,
+          "x": 1405.0,
+          "y": 10.0
+        },
+        "collapsed": false,
+        "name": "Stimulus Event Timeline",
+        "parent_name": "",
+        "visible_name": "Stimulus Event Timeline"
+      },
+      {
+        "begin_order": 8,
+        "bounds": {
+          "height": 560.0,
+          "width": 500.0,
+          "x": 1405.0,
+          "y": 500.0
+        },
+        "collapsed": false,
+        "name": "Analysis Timeline",
+        "parent_name": "",
+        "visible_name": "Analysis Timeline"
+      }
+    ]
+  },
+  "stable_frames": 60,
+  "state": "workspace",
+  "stimulus": {
+    "camera_frame": 56,
+    "presented_frame": -1,
+    "ready": false,
+    "target_frame": -1
+  },
+  "target_frame": 56,
+  "video": "/Volumes/johnsonlab/jeremy/recordings/2026-06-14T21-12-08Z_arena_1_GoodCopBadCop/cams/Cam2010093_2026-06-14T21-12-08Z_arena_1.mp4",
+  "viewports": {
+    "camera": {
+      "height": 338.0,
+      "width": 338.0,
+      "x": 976.0,
+      "y": 349.0
+    },
+    "crop_inset": {
+      "height": 240.0,
+      "width": 240.0,
+      "x": 1067.24,
+      "y": 440.24
+    },
+    "crop_preview": {
+      "height": 0.0,
+      "width": 0.0,
+      "x": 0.0,
+      "y": 0.0
+    },
+    "stimulus_debug": {
+      "height": 0.0,
+      "width": 0.0,
+      "x": 0.0,
+      "y": 0.0
+    },
+    "stimulus_inset": {
+      "height": 220.0,
+      "width": 220.0,
+      "x": 982.76,
+      "y": 460.24
+    }
+  },
+  "write_contract": "read-only"
+}

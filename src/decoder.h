@@ -1,34 +1,22 @@
 #ifndef RED_DECODER
 #define RED_DECODER
-#include "ColorSpace.h"
 #include "FFmpegDemuxer.h"
 #include "NvCodecUtils.h"
 #include "NvDecoder.h"
+#include "frame_types.h"
 #include <cuda.h>
 #include <cstddef>
+#include <memory>
 #include <opencv2/opencv.hpp>
+#include <vector>
 struct SeekInfo {
-    bool use_seek;
-    bool seek_done;
-    uint64_t seek_frame;
-    bool seek_accurate;
-    uint64_t seek_id;           // generation set by requester
-    uint64_t settled_seek_id;   // generation echoed back on completion
-};
-
-enum class PictureBufferFormat {
-    RGBA32 = 0,
-    NV12 = 1,
-};
-
-struct PictureBuffer {
-    unsigned char *frame;
-    int frame_number;
-    bool available_to_write;
-    int pitch_bytes;
-    size_t frame_bytes;
-    int color_matrix;
-    PictureBufferFormat format;
+    bool use_seek = false;
+    bool seek_done = false;
+    uint64_t seek_frame = 0;
+    bool seek_accurate = false;
+    uint64_t seek_id = 0;           // generation set by requester
+    uint64_t settled_seek_id = 0;   // generation echoed back on completion
+    std::shared_ptr<const std::vector<int64_t>> frame_number_map;
 };
 
 struct DecoderContext {

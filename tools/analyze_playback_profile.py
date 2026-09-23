@@ -31,6 +31,7 @@ NUMERIC_COLUMNS = {
     "camera_decode_gap_frames": int,
     "camera_decode_demux_ms": float,
     "camera_decode_submit_ms": float,
+    "camera_decode_decode_ms": float,
     "camera_decode_convert_ms": float,
     "camera_decode_wait_ms": float,
     "camera_decode_write_ms": float,
@@ -137,6 +138,10 @@ def load_rows(csv_path: Path) -> list[dict[str, Any]]:
                     parsed[key] = parse_numeric(value or "", NUMERIC_COLUMNS[key])
                 else:
                     parsed[key] = value
+            # Current modular telemetry calls this decode_ms; retain the older
+            # report field so existing report consumers and historical logs work.
+            if "camera_decode_submit_ms" not in parsed and "camera_decode_decode_ms" in parsed:
+                parsed["camera_decode_submit_ms"] = parsed["camera_decode_decode_ms"]
             rows.append(parsed)
     return rows
 

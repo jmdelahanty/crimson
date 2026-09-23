@@ -1,0 +1,7 @@
+{
+  "error": "Subject-mask bundle manifest digest differs",
+  "expected_exit_code": 1,
+  "schema_id": "crimson.subject_mask.bundle_v2_probe.negative_result",
+  "schema_version": 1,
+  "status": "expected_failure"
+}

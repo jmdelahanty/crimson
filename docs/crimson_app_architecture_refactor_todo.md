@@ -2,6 +2,847 @@
 
 Date anchored: 2026-04-03.
 
+Lifecycle: **active architecture roadmap**.
+
+## Long-Term Platform Composition
+
+The target is a shared Crimson application assembled by thin platform
+composition roots, not one universal platform implementation and not three
+copies of the current application shell. Shared application/session policy,
+repository contracts, presentation models, scene construction, transport
+commands, and feature UI modules should remain portable. Concrete media,
+graphics, native-window, and operating-system services remain behind platform
+adapters.
+
+The expected composition roots are:
+
+- `src/platform/macos/crimson_macos_main.mm` for Cocoa, Metal, and
+  AVFoundation wiring;
+- a future `src/platform/nvidia/crimson_nvidia_main.cpp` for the shared
+  CUDA/NVDEC/OpenGL/FFmpeg application used by Linux and Windows; and
+- optional very small Linux- or Windows-specific bootstrap files only when
+  native display initialization, crash handling, paths, dialogs, or packaging
+  genuinely differ.
+
+Ubuntu is a packaging and qualification target, not an application-architecture
+boundary, so a `crimson_ubuntu_main` should not be introduced merely to name a
+distribution. `src/red.cpp` currently serves as the combined Linux/Windows
+NVIDIA composition root. It should be moved or replaced only after its
+remaining responsibilities are narrow enough that the change is mechanical.
+
+A final composition root should only parse platform launch options, construct
+platform services, assemble the shared application/session, run the event
+loop, and perform ordered shutdown. It may establish per-frame dispatch order,
+but it should not implement repository semantics, feature state machines,
+coordinate policy, playback policy, or evidence schemas.
+
+Continue extraction when it creates a cohesive owner, removes duplicated
+behavior, makes policy headlessly testable, or replaces direct cross-feature
+mutation with a typed command or result. Do not extract solely to reduce line
+count, wrap a single call, predict a hypothetical platform difference, or
+force unlike Metal and NVIDIA resource lifecycles through one abstraction.
+Each extraction should preserve behavior, keep platform resource ownership
+explicit, and compile against every backend that consumes the new module.
+
+- [ ] Reduce `red.cpp` to the NVIDIA wiring/frame-loop boundary before moving
+      it to `src/platform/nvidia/crimson_nvidia_main.cpp`.
+- [ ] Add Linux- or Windows-specific bootstrap translation units only when a
+      concrete native integration requires them.
+- [ ] Keep macOS and NVIDIA media/rendering ownership separate while sharing
+      backend-neutral application and presentation contracts.
+- [ ] Stop extracting a region when its remaining code is platform wiring with
+      one clear owner and no independently testable policy.
+
+### 2026-08-10 NVIDIA Stimulus Alignment Repository Adoption
+
+The NVIDIA application now uses the backend-neutral `StimulusRepository` for
+camera-to-stimulus frame resolution throughout playback transport, paused
+buffer browsing, media-open initial seeks, per-frame presentation, UI-reference
+capture, and stimulus diagnostics. `LegacyStimulusRepository` is the one named
+compatibility adapter over the eagerly loaded NVIDIA archive session. It
+preserves corrected-first mapping with legacy fallback, exact missing and
+out-of-range states, interpolation provenance, reverse lookup, the alignment
+run identity, and the alignment's own camera-frame extent.
+
+This adoption does not move stimulus video decoding or rendering into the
+repository. FFmpeg/NVDEC workers, decoded buffers, CUDA/OpenGL resources,
+textures, demand flags, and media replacement remain NVIDIA-owned. Apple keeps
+its AVFoundation/Metal implementation while consuming the same repository
+contract. Event and step timelines remain on the separate
+`StimulusContextTimelineRepository`; legacy archive and source-HDF5 path
+fallback remain at the NVIDIA media-session composition edge.
+
+Portable tests freeze corrected lookup, legacy fallback, interpolation state,
+missing and out-of-range behavior, and the optional frame helper used by GUI
+callers. The direct-loader dependency policy removes the stimulus playback
+header and stimulus playback-window exceptions and adds only the named legacy
+adapter. All 98 macOS tests pass. The isolated Ubuntu NVIDIA target and focused
+stimulus tests compile and pass; its authenticated GoodCopBadCop playback smoke
+advanced frames 0 through 300 in 3.01 seconds, and the stimulus-inset smoke
+confirmed automatic stimulus-media loading and mapped presentation updates.
+
+### 2026-08-10 NVIDIA Keypoint Presentation Adoption
+
+The NVIDIA application now consumes the existing backend-neutral
+`KeypointOverlayRepository` for read-only frame inspection, camera keypoint and
+heading scenes, overlay diagnostics, and rotated crop-preview presentation.
+`LegacyKeypointOverlayRepository` is the one named compatibility adapter over
+the eagerly loaded NVIDIA session. Strict keypoint-v2 repositories continue to
+implement the same contract directly, so the shared GUI modules do not depend
+on a platform renderer or on `ZarrDetectionLoader`.
+
+Camera keypoint scene construction is now a pure portable adapter over the
+shared read-only overlay scene. Headless coverage freezes complete multi-row
+frame presentation, independent marker and heading layers, edit-marker
+suppression by detection ordinal, and stale-frame rejection. The Ubuntu
+NVIDIA build and authenticated 0:300 playback smoke pass with the new path.
+
+The compatibility boundary remains explicit. Legacy archives do not provide a
+stable `instance_key`, per-point confidence, or v2 source-audit identity, so
+the adapter leaves those fields unset instead of manufacturing scientific
+identity. Editing selection, ROI placement, heading-computation metadata,
+masks, and subject-shape access remain on their existing write or product
+contracts. They must migrate through their own repositories rather than being
+added to the keypoint presentation facade.
+
+### 2026-08-10 NVIDIA Diagnostics Session Extraction
+
+The NVIDIA composition root now delegates diagnostic sink configuration and
+lifetime to a typed `NvidiaDiagnosticsSession`. The session owns performance,
+mask-performance, playback, frame-sync, and clipped-frame writers; exact
+CLI/environment/default path precedence; clipped texture-dump configuration;
+clipped mismatch aggregation; periodic summary publication; and the final
+flush/close sequence. The render loop continues to gather concrete decoder,
+ring-buffer, resolver, texture, and framebuffer evidence because those reads
+remain timing- and backend-specific.
+
+The reusable CSV and mask JSONL sink types moved into `perf_log_writer.*`,
+separate from the frame-sampling code that depends on NVIDIA application
+globals. This permits the diagnostics session lifecycle to be tested without a
+GPU, decoder, GUI, or `ZarrDetectionLoader`. Headless tests freeze path
+precedence, invalid texture-frame rejection, sink enablement, envelope
+preservation, idempotent close, and exactly one shutdown summary.
+
+No diagnostic event schema, flush cadence, mask sampling cadence, or OpenGL
+readback behavior changes. This bounded extraction reduces `red.cpp` from
+5,472 to 5,368 lines. It is an NVIDIA platform session composed from portable
+writers and serializers, not a cross-backend rendering abstraction.
+
+### 2026-08-10 Review Write Repository Facade
+
+Refined-keypoint mutations now cross the backend-neutral
+`ReviewWriteRepository` contract. The contract owns selection, ROI placement,
+cache-update, edit-result, operation, and repository-factory records without a
+GUI, renderer, platform, TensorStore, or `ZarrDetectionLoader` dependency. The
+NVIDIA adapter translates editor actions into typed repository operations and
+executes them through an injected factory.
+
+The compatibility implementation remains intentionally narrow. The existing
+`RefinedKeypointRepository` implements the facade, while
+`OpenLegacyReviewWriteRepository` owns an independently opened legacy loader on
+the write worker. On completion, the NVIDIA adapter receives callbacks for the
+active archive path, targeted cache installation, reload fallback, editor
+reset, and downstream invalidation. It no longer includes or names
+`ZarrDetectionLoader`; the composition root supplies those concrete callbacks.
+
+The durable-write rules are unchanged: one write runs at a time, running writes
+are not cancelled, generation/archive mismatches suppress stale settlement,
+targeted cache installation is preferred, and a failed cache installation
+falls back to a full active-archive reload. Fake-repository and callback tests
+freeze operation mapping, exact result propagation, reset behavior, successful
+cache installation, reload fallback, reload failure, and invalidation. The
+direct-loader dependency policy no longer carries an NVIDIA write-adapter
+exception.
+
+### 2026-08-10 Detection Repository Facade
+
+The NVIDIA application now reaches selected detection datasets through the
+backend-neutral `DetectionRepository` contract for dataset enumeration and
+selection, archive/run capabilities, complete per-frame observation ranges,
+frame cardinality, interpolation status, and read-only bbox presentation. The
+contract preserves arbitrary observation counts with `size_t` ordinals and has
+no GUI, renderer, HDF5, OpenCV, TensorStore, platform, or
+`ZarrDetectionLoader` dependency.
+
+`LegacyDetectionRepository` is the single compatibility adapter over the
+eagerly loaded NVIDIA session. A separate NVIDIA presentation adapter converts
+neutral XYXY observations into the existing `LoggedBoundingBox` UI record;
+that record's `uint8_t` ordinal is a legacy presentation limitation and is not
+part of repository identity. The composition root retains the compatibility
+adapter while strict canonical/refined TensorStore repositories remain
+available for future session adoption.
+
+Dataset switching, reload restoration, camera and crop-preview bbox reads,
+detection confidence/class/source inspection, and review-frame indexing now
+consume the facade. Review indexing no longer includes `zarr_loader.h` and is
+covered with empty, interpolated, non-clean, overlapping, same-class, and
+multi-observation frames. The direct-loader dependency baseline remains 28:
+the named legacy adapter replaces the removed `review_frame_state.h`
+dependency.
+
+This checkpoint deliberately leaves the legacy combined frame-detail read in
+place for keypoints, headings, masks, eye geometry, and subject shape. Those
+products need their own repositories; adding them to `DetectionRepository`
+would recreate the monolith. Manual bbox writes also remain outside this
+read-only contract until their storage/edit lifecycle is stable.
+
+### 2026-08-10 Async Single-Flight Write Extraction
+
+The reusable asynchronous boundary is execution policy, not a universal data
+loader. `AsyncSingleFlightJob` now owns immediate background launch, one-active
+job enforcement, monotonic sequence identity, exception capture, nonblocking
+completion polling, queue/service timing, and shutdown joining. It contains no
+Zarr, keypoint, UI, renderer, or platform types. Running work is deliberately
+not cancelled: a durable mutation must finish, while its typed consumer decides
+whether the completion is still relevant.
+
+The Linux/Windows application uses that mechanism through a typed
+`RefinedKeypointWriteSession`. Requests bind the write to both the recording
+session generation and archive path. The session owns validation, busy
+rejection, status construction, stale-completion suppression, and the reset
+intent returned to the main thread. Its worker is injected, so lifecycle tests
+do not require a real archive mutation.
+
+The NVIDIA adapter now depends on `ReviewWriteRepository`. The legacy
+repository factory owns the worker-side loader, while typed completion
+callbacks apply the targeted cache update or reload fallback on the GUI thread.
+The application closes the write session before tearing down the active loader
+and schedulers.
+
+This is intentionally separate from `DataAccessScheduler`, which retains
+priority, cancellation, and demand-reservation semantics for frame-local
+reads. Video decoders also retain dedicated long-lived workers. Future
+repository-open or mutation workflows may reuse the single-flight runner when
+they share its exact lifetime semantics; each product still requires a typed
+request, result, and settlement adapter.
+
+Portable tests cover invalid jobs, busy rejection, ordered sequence identity,
+exception capture, timing, and close/join behavior. NVIDIA fake-worker tests
+cover ignored and invalid keypoint requests, single-flight behavior, exact
+success and failure states, generation/archive staleness, reset intent, and
+worker exceptions. The extraction reduces `red.cpp` from 5,718 to 5,472 lines
+without adding keypoint-write support to the read-only Metal application.
+
+### 2026-08-10 NVIDIA Camera-Frame Data Adapter Extraction
+
+The NVIDIA camera-view loop now obtains its read-only per-frame analysis data
+through `CameraFrameDataAdapter`. The adapter accepts typed detection and
+keypoint repositories, selects the exact presented camera frame (including the
+last settled parent frame during a clipped-media handoff), resolves every row
+for that frame, converts detections to the maintained legacy box surface, and
+requests optional mask/shape details through an explicit compatibility
+callback. It rejects any repository or compatibility result whose frame
+identity does not match the request, so a late seek result cannot reach the
+renderer.
+
+The returned value owns one self-consistent camera-frame snapshot: repository
+descriptors, detection rows, keypoint observations, presentation boxes,
+optional legacy details, interpolation/edit capabilities, and repository
+resolution timings. Exact empty frames remain ready empty frames rather than
+being treated
+as missing. During playback, mask cache prefetch remains nonblocking and occurs
+before the optional detail lookup.
+
+This is deliberately a narrow NVIDIA compatibility adapter, not a new
+universal repository. The typed repository contracts and frame-selection
+inputs are backend-neutral, while `red.cpp` retains bbox edit mutations,
+decoder-slot and clipped-switch execution, playback state, ImGui composition,
+and CUDA/OpenGL resources. The legacy combined detail callback remains isolated
+until masks, subject shape, and eye geometry all use their dedicated typed
+repositories in the NVIDIA camera view.
+
+Headless Linux tests cover exact/current/clipped query selection, multiple and
+empty detection rows, keypoint observations, mask prefetch, interpolation and
+edit capabilities, inactive requests, and stale detection/keypoint/detail
+suppression. The isolated Ubuntu/CUDA/TensorRT build and authenticated NVIDIA
+playback smoke pass through frames 0 to 300. The macOS build retains 99 passing
+tests, all eight configured NVIDIA-labeled headless tests pass together, and
+the Zarr-loader dependency policy names this adapter as a temporary
+compatibility boundary.
+
+### 2026-08-11 NVIDIA Frame Inspect Data Adoption
+
+Frame Inspect now consumes the same `CameraFrameDataAdapter` as the NVIDIA
+camera view. Its former duplicate path independently resolved detection and
+keypoint repositories, converted presentation boxes, tested interpolation and
+edit capabilities, prefetched masks, loaded legacy mask/shape details, and
+published results without the adapter's exact-frame rejection. That storage
+and stale-result logic now has one implementation.
+
+The request contract now describes a selected frame rather than requiring a
+presented video frame, allowing inspection of the requested timeline position
+without weakening camera-view presentation semantics. Legacy detail loading is
+explicitly conditional: callers may require it unconditionally, when a
+keypoint run is available, or when the selected detection surface contains
+synthetic observations. Mask and subject-shape payload flags remain separate,
+and invalid or unselected frames perform no payload reads.
+
+Frame Inspect retains UI-tab policy, bbox edit overlays, review mutations, and
+the legacy `FrameDebugWindowContext`. Removing that context's direct loader
+reference requires the remaining subject-shape, eye-angle, tail-kinematics,
+and review-navigation repository boundaries; this checkpoint does not invent
+temporary facades for those evolving contracts. The adoption reduces
+`red.cpp` from 5,478 to 5,468 lines and removes its second direct detection,
+keypoint, mask-prefetch, and combined-detail read pipeline.
+
+The expanded adapter tests cover unconditional, keypoint-conditional, and
+synthetic-detection-conditional details plus unloaded, unselected, and invalid
+frame suppression. All eight NVIDIA-labeled tests, the isolated Linux
+CUDA/TensorRT build, the authenticated frames 0-to-300 playback smoke, 84
+portable tests, and 15 serial macOS tests pass.
+
+## Recording Clip Index Media
+
+- [x] Extract strict backend-neutral `recording_clip_index.json` parsing and
+      parent-to-local frame mapping.
+- [x] Preserve the clip-index source through the shared session-open and
+      replacement transaction.
+- [x] Add macOS AVFoundation clip switching on a global recording frame axis.
+- [x] Add recording-identity-based archive discovery and mounted boundary
+      smoke coverage.
+- [x] Adopt the shared mapping contract in the Linux/Windows FFmpeg/NVIDIA
+      decoder adapter.
+- [ ] Replace the compatibility envelope when Palette publishes a versioned,
+      digest-bound recording clip index contract.
+
+### 2026-08-10 NVIDIA Adoption Checkpoint
+
+The FFmpeg/NVIDIA application now consumes a backend-neutral
+`RecordingClipMediaProvider` built from the same strict `RecordingClipIndex`
+used by macOS. The provider owns immutable clip descriptors, parent-to-local
+frame resolution, and per-clip parent-frame maps. The platform loader retains
+ownership of FFmpeg demuxers, NVDEC threads, CUDA resources, decoder-local
+seeks, and atomic media replacement.
+
+The NVIDIA playback controller no longer reaches into the legacy Zarr clipped
+resolver to interpret a seek. It asks one media callback for the decoder-local
+frame, so single-file media, recording clip indexes, and the legacy clipped-
+collection compatibility adapter all use the same transport command path.
+Affiliated-media discovery preserves the existing legacy clipped-collection
+behavior, prefers a valid full affiliated video for standard archives, and
+uses `recording_clip_index.json` when no full video is available.
+
+Deterministic coverage resolves frames on both sides of a clip boundary and
+exercises switch request, duplicate suppression, completion, settlement,
+failure, invalid mapping, and cancellation reset. The Ubuntu 22/CUDA/TensorRT
+NVIDIA target and its focused tests compile and pass in the isolated Linux
+build. A native ws1 GPU smoke used the explicit index entry point, crossed
+parent frames `53990:54010`, switched from clip 0 to clip 1 at parent frame
+54,000/local frame 0, and passed with the presented and overlay-query frames
+both at 54,010. Windows shares this adapter source but still requires its
+native build and GUI smoke before a Windows release claim.
+
+### 2026-08-10 NVIDIA Handoff Coordinator Extraction
+
+Mapped-media queries now live behind `MediaSessionLoader`: callers ask whether
+mapped media is active, obtain its parent-frame count, and resolve a parent
+frame to one backend-neutral `ClippedFrameBinding`. The loader translates both
+the strict recording clip index and legacy Zarr clipped collections.
+`PaletteClippedMediaState` now contains the one authoritative
+`ClippedMediaHandoffState`; `red.cpp` no longer copies clip identity, range, or
+pending-switch fields into parallel state.
+
+The NVIDIA-specific command executor is isolated in
+`nvidia_clipped_media_coordinator`. It applies the portable handoff policy,
+invokes an injected load/seek callback, validates the loaded binding, and
+publishes request, load, presentation, and failure events. FFmpeg, NVDEC,
+CUDA, OpenGL, Zarr, ImGui, and concrete log writers remain outside the
+coordinator. Headless tests cover interior frames, one-shot boundary loading,
+duplicate suppression, presentation settlement, failed loads, paused playback,
+invalid state, and unmapped boundaries.
+
+This bounded Phase 3 extraction reduces `red.cpp` from 6,910 to 6,796 lines.
+The composition root now wires media queries, seek execution, and telemetry;
+it no longer implements clipped-media state transitions or provider-specific
+frame binding.
+
+### 2026-08-10 Decoded Buffer Browser Extraction
+
+The decoded-frame browser now has a backend-neutral model and composable ImGui
+window. The model consumes 64-bit presentation candidates with optional
+platform slot identities, sorts an immutable snapshot, groups contiguous
+spans, measures gaps, highlights the nearest frame with the maintained
+later-frame tie rule, and exposes a preferred slot only for an exact slotted
+match. This makes the policy usable by both NVIDIA rings and retained Apple
+decode surfaces without inventing a slot identity for Apple.
+
+The ImGui module owns the existing `Frames in the buffer` presentation and
+returns a selection command; it does not mutate playback, decoder, renderer,
+or telemetry state. The NVIDIA adapter obtains candidates through synchronized
+`frameSlotSnapshotReadable` calls instead of reading the legacy ring fields
+directly. `red.cpp` retains camera choice, command application, and event
+publication as composition responsibilities.
+
+Headless tests cover sorting, spans and gaps, exact and nearest selection,
+duplicate frames, empty buffers, 64-bit slotless candidates, and readable-slot
+snapshot isolation. Semantic ImGui coverage preserves the shared window and
+selection labels. The module compiles into the macOS app, but the Apple
+workspace does not expose this diagnostic window yet. The maintained NVIDIA
+application remains the active user of the ring-slot adapter.
+
+This extraction reduces `red.cpp` from 6,796 to 6,646 lines without changing
+buffer release, pause/resume, seek, decoder, CUDA, OpenGL, or Metal behavior.
+The macOS build and all 83 configured tests pass. An isolated native Ubuntu
+22/CUDA 12.4/TensorRT 10 build also passes the focused model and adapter tests;
+the authenticated ws1 playback smoke advanced parent frames 0 through 300 and
+presented frame 300 from slot 0 in 3.00 seconds.
+
+### 2026-08-10 Camera Media Open Extraction
+
+Camera-media selection is now planned through a backend-neutral contract before
+the NVIDIA application mutates decoder state. The planner classifies a complete
+selection as MP4 cameras or an image sequence, preserves camera ordering and
+full paths, and fails closed for mixed types, duplicate camera identities,
+malformed image names, or incomplete camera/frame image grids. Portable tests
+cover valid multi-camera video and image selections plus each rejection path.
+
+`MediaSessionLoader` now owns the NVIDIA execution of that plan: FFmpeg demuxer
+construction, image sample validation, camera dimensions, decoder teardown and
+replacement, scene-buffer allocation, decoder/image-loader thread startup,
+playback timeline configuration, initial video seek, and calibration loading.
+Selection validation and media probing happen before existing camera decoder
+threads are stopped. If replacement fails after teardown begins, the loader
+stops and joins any partially started replacement threads and reports the
+failure through the existing recording-open workflow.
+
+The `ChooseMedia` branch in `red.cpp` now translates the ImGui file-dialog
+selection, invokes the loader, refreshes composition-level playback state, and
+settles the shared session transaction. It no longer parses camera/image names,
+constructs demuxers, allocates render buffers, or starts decoder threads. This
+bounded Phase 3 extraction reduces `red.cpp` from 6,646 to 6,556 lines. FFmpeg,
+NVDEC, CUDA, OpenGL, and concrete thread ownership remain platform-specific;
+the selection plan and session lifecycle remain backend-neutral.
+
+### 2026-08-10 Archive And Stimulus Open Extraction
+
+Archive and stimulus file-dialog opens now use backend-neutral command/result
+coordinators. The archive coordinator owns the required-product transaction,
+resolved-path adoption order, affiliated camera/stimulus discovery order,
+recording-clip-index capture, commit, and fail-closed cleanup. The stimulus
+coordinator owns the corresponding transaction and carries a portable media
+request containing buffer policy and optional initial-seek intent. Neither
+coordinator includes ImGui, Zarr, FFmpeg, CUDA, OpenGL, Metal, or decoder types.
+
+`MediaSessionLoader` remains the NVIDIA execution facade. Its narrow stimulus
+adapter translates the portable request into the existing FFmpeg/NVDEC
+stimulus player, resets decoder demand flags, and schedules the initial mapped
+seek when requested. The archive adapter still invokes the legacy
+`ZarrDetectionLoader` and presentation-cache refresh callbacks at the
+composition edge; this preserves current legacy archive compatibility without
+moving that loader into the portable runtime contract.
+
+Headless tests cover successful commits, descriptor preservation, resolved
+paths, callback ordering, open failures, thrown adapter failures, fail-closed
+cleanup, and invalid commands that must not begin a transaction. The native
+Ubuntu 22/CUDA/TensorRT application compiles and its authenticated GPU smoke
+advances frames 0 through 300 after opening the GoodCopBadCop archive. This
+bounded extraction reduces `red.cpp` from 6,556 to 6,541 lines while removing
+the remaining archive/stimulus transaction implementation from the dialog
+branches.
+
+### 2026-08-10 NVIDIA Launch Options Extraction
+
+Linux and Windows launch parsing now lives in a typed
+`nvidia_launch_options` module. It owns recording/archive inputs, explicit run
+overrides, selector-ineligible benchmark artifacts, smoke ranges, UI-reference
+capture inputs, trace paths, frame pacing, mask diagnostics, and CUDA-device
+configuration discovery. Parsing returns a value plus ordered diagnostics and
+one fail-fast error; it has no decoder, renderer, ImGui, Zarr-loader, or quality-
+timeline dependency.
+
+`red.cpp` now installs the platform crash handler, parses once, reports the
+result, and expands only smoke and UI-reference fields that acquire mutable
+runtime state. Keypoint benchmark triples are converted to the existing
+quality-timeline request at the composition edge. The macOS Metal shell keeps
+its separate launch surface because it does not expose the NVIDIA smoke,
+TensorRT, CUDA-device, or legacy editing options.
+
+Headless tests cover defaults, unknown-option compatibility, every maintained
+option class, artifact completeness, mutually exclusive modes, invalid values,
+recording precedence, clip-index filesystem validation, frame-pacing fallback,
+UI-reference completeness, and saved CUDA-device parsing. This extraction
+reduces `red.cpp` from 6,541 to 5,982 lines without changing the accepted
+command-line interface.
+
+### 2026-08-10 Shared UI Reference Capture Extraction
+
+The Metal and OpenGL shells now use one backend-neutral UI-reference capture
+coordinator. It owns stable-frame accumulation and reset, timeout transition,
+one-shot capture and publication phases, terminal failure state, output cleanup,
+and atomic JSON marker publication. Headless tests cover exact-presentation
+gating, readiness loss, timeout boundaries, invalid policy, capture failure,
+duplicate publication prevention, stale-output cleanup, and marker replacement.
+
+Each shell still owns its state-specific readiness predicate and evidence
+payload. Metal retains drawable readback and BGRA-to-PNG conversion; OpenGL
+retains front-buffer readback. Neither renderer, workspace layout, archive
+selection, nor semantic snapshot schema moved into the coordinator. This keeps
+the shared lifecycle usable without pretending that Metal and OpenGL have the
+same GPU capture mechanics or that every reference state requires a camera
+frame.
+
+Real capture checks reached publication after exactly 60 stable frames on both
+backends: an empty-workspace Metal capture and a frame-exact NVIDIA workspace
+capture on the authenticated X display. The adoption reduces `red.cpp` from
+5,982 to 5,917 lines and removes the duplicate lifecycle and atomic-marker
+implementations from both composition roots.
+
+### 2026-08-10 Shared UI Reference Contract Extraction
+
+UI-reference automation now uses one backend-neutral option and marker
+contract. The contract owns the complete state vocabulary, canonical state
+names, backend capability masks, parsing of state/frame/output/size/timeout
+arguments, common fail-closed validation, and the mandatory v1 JSON envelope.
+The Metal shell retains its 90-second default and logical-size option; the
+NVIDIA shell retains its 60-second default and rejects Metal-only states.
+
+Both shells add their existing renderer and feature evidence to the shared
+envelope. Viewports, buffer inventories, overlay counts, crop/stimulus state,
+analysis selections, semantic snapshots, and GPU surface capture remain with
+the platform composition roots. The shared contract fixes the common fields:
+format, platform, state, archive, read-only declaration, target/presented frame,
+stable-frame count, client/framebuffer sizes, and rendered-image identity.
+
+Portable tests cover the state vocabulary, capability rejection, complete and
+partial option sets, numeric/size limits, and exact marker-envelope fields.
+NVIDIA launch tests also prove that a timeout-only request fails closed and
+that unsupported Metal states cannot enter the OpenGL runtime.
+
+Real captures preserve the automation surface on both backends: Metal
+published an empty 1280x720 reference and OpenGL published a frame-exact
+1920x1080 workspace reference at frame 56, both after exactly 60 stable frames.
+The authenticated NVIDIA playback smoke also advanced frames 0 through 300 in
+3.00 seconds after the parser adoption.
+
+### 2026-08-10 Shared UI Reference Scene Evidence
+
+Polar-inset and stimulus-camera-overlay evidence now use one backend-neutral
+JSON serializer. The serializer consumes only the portable scene, optional
+repository descriptor, and an explicit display transform containing origin and
+framebuffer scale. It has no ImGui, Metal, OpenGL, decoder, archive, or capture
+dependency. Both shells continue to own scene construction, GPU rendering,
+framebuffer readback, and evidence publication.
+
+The shared transform preserves unit-scale NVIDIA screen coordinates and
+Retina-scaled Metal coordinates. Stimulus evidence now always declares
+`display_scale`; NVIDIA reports the previously implicit `{1, 1}` transform,
+while Metal reports its drawable scale. Portable tests lock the complete
+top-level, descriptor, primitive, and text envelopes and verify unscaled and
+nonuniform scaled coordinates without changing the scene semantic signature.
+
+This extraction removes the duplicate serializers from both composition roots,
+reducing `red.cpp` from 5,920 to 5,718 lines and
+`crimson_macos_main.mm` from 6,118 to 5,909 lines. Historical reference files
+remain immutable evidence; future captures use the shared envelope.
+
+### 2026-08-10 Apple Analysis Product Adoption Extraction
+
+The macOS composition root now delegates completed analysis-repository bundles
+to `AppleAnalysisProductAdopter`. The adopter owns the product installation
+sequence, initial-frame demand policy, buffer-open and smoke-wait policy,
+availability/error transitions, descriptor logging, crop source fallback, and
+the dependency that defers swim-bout adoption until motion has settled.
+
+Bindings are grouped by product and remain references to the existing macOS
+session state. This deliberately preserves buffer, playback, renderer, and
+workspace ownership while making every dependency explicit; moving those
+objects into a consolidated Apple analysis session is a later ownership step,
+not part of this behavior-preserving extraction. A small pure policy module
+provides headless truth-table coverage for progressive initial-frame demand and
+swim-bout deferral.
+
+The extraction reduces `crimson_macos_main.mm` from 7,064 to 6,113 lines. The
+composition root now starts the asynchronous loader and submits completed
+bundles; it no longer implements roughly one thousand lines of per-product
+repository adoption. This module is Apple-specific because it opens
+AVFoundation/Metal-side playback and Apple buffers. Repository schemas,
+timeline selection contracts, scheduling, and overlay scene adapters remain
+backend-neutral where already shared.
+
+### 2026-08-10 Shared Analysis Product Lifecycle
+
+The initial-frame demand rule and product dependency state machine now live in
+the backend-neutral `AnalysisProductLifecycleController` within
+`crimson_runtime_contracts`. A lifecycle plan is generation-bound and contains
+only named product dependencies. Platform adapters route an opaque payload,
+install it when instructed, and report its terminal available or unavailable
+state. The controller never sees repositories, TensorStore handles, decoders,
+buffers, renderers, or UI state.
+
+The controller rejects invalid dependency graphs, stale generations, duplicate
+adoption, unrouted completion, and work submitted after cancellation. Deferred
+products are released in deterministic order once every prerequisite has
+settled; an unavailable prerequisite still releases its dependents so the
+platform adapter can apply its own required/optional failure policy. Portable
+tests cover multi-prerequisite ordering, unavailable prerequisites, generation
+replacement, cancellation, duplicates, graph validation, and initial-frame
+demand.
+
+The Apple adopter now uses this shared controller for the `motion` to
+`swim_bouts` dependency and binds it to the recording-open generation. Apple
+continues to own the deferred repository bundle and all concrete installation.
+The NVIDIA application links and compiles the same controller through the
+shared runtime library, but its current archive loader installs analysis
+synchronously and therefore has no asynchronous payload queue to route yet.
+This is an explicit compatibility boundary, not a second platform-specific
+lifecycle implementation.
+
+## 2026-07-23 Runtime Contract Checkpoint
+
+The first backend-neutral runtime slices are now shared by the macOS and
+NVIDIA application shells: session lifecycle, loading progress, frame
+presentation policy/metrics, and diagnostic reporting. Their ownership rules
+and cross-platform test surface are recorded in
+`docs/crimson_shared_runtime_contracts_2026-07-23.md`.
+
+Session readiness policy and generation-safe session-open transactions have
+also moved into that shared runtime library. The macOS shell now uses strict
+analysis readiness without background dismissal or autoplay, while both shells
+use the transaction for session-open lifecycle/progress bookkeeping.
+
+The macOS shell also uses the portable progress-settlement helper for its
+initial session. The helper converts analysis-loader readiness into the parent
+`analysis` product and commits or fails the session transaction; repository
+result adoption, ImGui rendering, playback, and Metal ownership remain in the
+shell.
+
+Loading presentation is now split as well. A portable view model lives in the
+runtime contracts, and the shared ImGui modal lives under `src/gui`. The macOS
+composition root supplies snapshots and readiness decisions but no longer owns
+the modal's labels, progress formatting, or popup lifecycle.
+
+The next bounded controller slice is also complete. A backend-neutral
+`RecordingOpenWorkflowController` now owns the active transaction, product
+timing, failure/cancellation transitions, and generation-checked child-loader
+settlement. The macOS and NVIDIA shells both use it for CLI and interactive
+recording opens, while they continue to own archive reads, decoder creation,
+repository adoption, threads, and GPU resources. This is progress toward the
+Phase 3 `RecordingLoader` boundary, not completion of the broader Phase 3
+controller extraction.
+
+Playback transport is now a shared controller as well. The former portable
+logical clock owns play/pause/seek/step/rate commands, readiness gating,
+timeline clamping, and end-of-stream pause. macOS uses it directly for Metal
+viewer controls; NVIDIA uses the same clock and command state while retaining
+its existing buffer-aware resume, exact-seek, stimulus, FFmpeg, CUDA, and
+OpenGL execution. This is a completed bounded slice of the Phase 3
+`PlaybackController`, not completion of the platform playback adapters.
+
+This checkpoint does not create the proposed catch-all `AppState`. Decoder,
+repository, thread, window, and GPU-resource ownership remains in the existing
+platform/application layers. Coordinate-sensitive ROI work remains deferred
+until the acquisition-to-presentation contracts stabilize.
+
+## 2026-07-31 Shared Affiliated-Media Checkpoint
+
+Recording-root inference, persisted-path relocation, and strict affiliated-
+video discovery are now backend-neutral. macOS and Linux standard archives use
+the same `ArchiveContext` repository, including fail-closed authoritative
+metadata handling; the Linux legacy source hint is used only when shared
+metadata is absent. Clipped collection switching remains a compatibility
+adapter. See `docs/crimson_shared_affiliated_media_checkpoint_2026-07-31.md`.
+
+## 2026-08-03 Composable Frame Inspect Checkpoint
+
+The macOS and Linux/Windows shells now compose Frame Inspect through one
+backend-neutral ImGui window module. The shared module owns window and tab-bar
+lifecycle, visible-module ordering, disabled interaction state, stable
+programmatic tab selection, and header/footer placement. Both platform
+composition roots register Detect, Keypoints, Subject Masks, and Eye Angles as
+callbacks. Linux/Windows additionally registers its maintained Tail Kinematics
+inspection tab; macOS exposes tail kinematics through Analysis Timeline.
+
+This is intentionally a presentation boundary rather than a merge of platform
+repositories or editing policies. macOS callbacks retain the strict read-only
+repository surfaces, while Linux/Windows callbacks retain their legacy review
+and editing panels. Both use the same `FrameInspectView` selection state, so
+workspace restore and programmatic navigation no longer require a Linux-only
+tab enum or conversion shim. Semantic ImGui coverage verifies that requested
+tabs remain stable and hidden modules are not rendered.
+
+The first feature module now uses that composition boundary. Detect has one
+backend-neutral presentation model and ImGui renderer for surface/run identity,
+frame readiness, complete observation rows, stable instance selection,
+confidence, class, source provenance, and quality-timeline status. The strict
+canonical/refined repository adapter and the Linux legacy-loader adapter are
+separate. Linux review, diagnostics, and bounding-box editing remain extension
+panels below the shared presentation rather than dependencies of it.
+
+Keypoints now follows the same module boundary. One shared presentation model
+and ImGui renderer owns surface/run identity, frame readiness, complete
+observation rows, stable instance selection, pose and per-landmark confidence,
+validity/edit state, and quality-timeline status. The strict keypoint-v2
+repository adapter and Linux legacy-loader adapter remain independent. Overlay
+visibility and styling, skeleton and heading diagnostics, review, and crop
+editing remain platform extensions, so extracting the read-only surface does
+not weaken either platform's maintained workflows.
+
+Subject Masks now uses the same boundary. The shared presentation model and
+renderer preserve complete per-frame observation ranges, ROI dimensions,
+component/channel availability, pixel-payload and contour counts, source-crop
+lineage, and stable `instance_key` selection. A resolved empty frame is
+presented as zero observations rather than as an in-progress read. The strict
+subject-mask repository adapter and the Linux legacy-loader adapter remain
+separate; overlay modes and component visibility, subject-shape controls,
+mask editing, and review metadata remain platform extensions. This keeps the
+dense-mask and sampled-contour repositories out of the UI module while
+preserving the Linux editing workflow.
+
+Eye Angles now follows the same boundary. The shared presentation model and
+renderer preserve complete per-frame observation ranges, row-scoped UI
+selection, representation-specific scalar and vector fields, validity,
+marginal/reason state, and source/crop lineage. The UI selection key is
+explicitly not scientific observation identity. A strict eye-geometry
+repository adapter and a Linux legacy-loader adapter remain separate; overlay
+styling, QC filtering and navigation, and timeline controls remain platform
+extensions.
+
+Subject Shape now composes inside the Subject Masks view through the same
+boundary. The shared model and renderer preserve every resolved observation,
+row-scoped UI selection, source/refined/crop lineage when declared, ROI size,
+per-feature validity, curve/sample counts, and failure reasons. It deliberately
+does not infer one overall validity value: the legacy loader's row-valid flag
+and the strict repository's feature-valid flags do not mean the same thing.
+The strict subject-shape repository adapter and Linux legacy-loader adapter
+remain separate, while Metal/OpenGL overlay controls, Linux QC navigation, and
+mask editing remain platform extensions. This extraction does not freeze the
+still-evolving Palette subject-shape storage manifest.
+
+Subject Shape overlay controls now use a shared widget module as well. Its
+backend-neutral state covers the common geometry visibility controls, while
+capabilities explicitly gate the legacy body, swim-bladder, and eye contour
+toggles that are not part of the strict macOS overlay surface. Thin adapters
+translate the existing read-only Metal state and Linux camera-view options;
+rendering, storage access, Linux QC, and editing ownership remain unchanged.
+
+Eye Geometry overlay controls now follow the same pattern. The shared widget
+owns visual-cone, gaze-ray, angle-arc, and label visibility. A capability keeps
+the explicit macOS master toggle and its Review/Debug availability gating,
+while Linux/Windows retains its direct detail toggles. The strict Metal adapter
+only translates control state; mask modes, repositories, scene construction,
+and platform renderers remain independently owned.
+
+Subject Mask mode and component controls are now shared as a separate narrow
+module. It reuses the existing backend-neutral Realtime/Review/Debug mode and
+owns visibility controls for the body, swim bladder, and both eyes. Capability
+inputs preserve macOS availability gating and Linux/Windows refined-mask
+behavior, including their distinct Realtime tooltip semantics. Platform master
+toggles, legacy eye-mask fallback, metadata, contour diagnostics, editing/QC,
+repositories, scene construction, and renderers remain independently owned.
+
+Frame Inspect workflow projection now has a backend-neutral controller as
+well. It owns stable tab synchronization, workspace overlay/window projection,
+portable keypoint-selection state, full-frame edit eligibility, and a
+deterministic command sequence. The NVIDIA adapter translates the legacy Frame
+Debug result and executes dataset switching, review/QC navigation, row seeks,
+and in-memory bounding-box reset/selection commands. Archive writes, payload
+construction, decoder diagnostics, repository reloads, and rendering remain
+explicitly in the NVIDIA composition root pending their own transaction
+boundaries. The portable controller has headless state and command-order tests;
+the adapter is compiled with the isolated Linux application build. This is a
+bounded Phase 3 extraction and does not change storage, editing, or coordinate
+contracts.
+
+## 2026-08-05 Playback Presentation Lifecycle Checkpoint
+
+`PlaybackSessionController` now owns the playback-frame target and commit
+lifecycle that was previously embedded in `red.cpp`. The portable policy uses
+explicit target and commit input/output values, so paused and seek-settling
+states, decode bounds, buffered fallback, non-regressing commits, and deferred
+release decisions are headless-testable. The NVIDIA controller remains the
+only layer that reads or releases concrete frame slots; render/GL/CUDA work and
+trace serialization remain in `red.cpp`.
+
+This is a bounded Phase 3 extraction. It deliberately does not change the
+logical transport clock, clipped-media routing, stimulus handling, archive
+state, or renderer ownership. macOS can consume the same portable policy when
+its presenter reaches the corresponding explicit commit lifecycle.
+
+## 2026-08-05 Playback Diagnostics And Clipped Handoff Checkpoint
+
+Playback JSONL envelope writing and the common playback, seek, presenter,
+buffer, stimulus, frame-sync, and clipped-state serializers now live in a
+portable diagnostics module. The module has profile-specific serializers so
+existing playback, frame-sync, and clipped event field sets do not silently
+grow or drift. `red.cpp` still gathers concrete NVIDIA slot state, decoder
+progress, resolver results, and GPU texture evidence; the dense
+texture-draw and renderer-specific clipped-frame payload remained there at
+this checkpoint.
+
+Clipped-media boundary policy is likewise portable. It accepts already
+resolved parent-frame bindings and emits only a load-and-seek command plus
+request/load/settlement/failure outcomes. The NVIDIA composition root retains
+media loading through `PlaybackSessionController`, decoder seek execution, GPU
+resources, and trace-sink ownership. Provider-specific binding lookup and
+handoff command execution have since moved into the mapped-media loader facade
+and narrow NVIDIA coordinator described in the 2026-08-10 checkpoint. This
+keeps the policy reusable without making it a media, renderer, or archive
+adapter.
+
+Headless tests cover JSONL envelope/flush behavior, field-profile stability,
+buffer summaries, and boundary request/load/settlement/failure behavior. This
+is a bounded Phase 3 extraction; it does not change clip-index storage,
+decoder scheduling, rendering, or archive selection.
+
+## 2026-08-05 NVIDIA Playback Diagnostics Adapter Checkpoint
+
+The remaining NVIDIA playback trace rules are now separated from the
+application loop. `nvidia_playback_trace_model` owns frame-sync change gating,
+clipped-frame comparison and mismatch aggregation, source-label policy, and the
+stable JSON payloads for resolver, bounding-box, texture-draw, and clipped-frame
+events. It consumes plain snapshots and has no Zarr, CUDA, OpenGL, ImGui, or
+decoder dependency. Headless tests cover change suppression, unknown-value
+nullability, delta summaries, callback failures, and the established event
+schema.
+
+`red.cpp` remains the NVIDIA composition layer: it resolves concrete Palette
+rows, inspects decoder and ring-buffer state, captures renderer texture IDs,
+and adapts those values into trace snapshots. OpenGL texture and framebuffer
+readback are isolated in `nvidia_gl_diagnostics`; that module is intentionally
+backend-specific because its correctness depends on a current GL context and
+restoring GL bindings and pixel-pack state after readback.
+
+A follow-up adapter now owns the concrete bounding-box and texture conversions,
+camera ring-buffer snapshot gathering, and the detailed clipped-playback buffer
+summary. Resolver rows are converted to plain values at the composition edge;
+the adapter does not acquire a new direct dependency on `zarr_loader.h`.
+Standalone clipped texture-draw and texture-dump event schemas also moved into
+the pure trace model. The render loop retains the timing-sensitive pre/post-draw
+capture, GL readback call, media/resolver lookup, and log-writer invocation.
+
+These extractions change neither playback scheduling nor the JSONL diagnostic
+schema. The first checkpoint reduced `red.cpp` from 7,544 to 7,139 lines; the
+follow-up reduces it to 6,855 lines, a cumulative 689-line reduction while
+preserving the existing NVIDIA runtime evidence path.
+
+## 2026-08-05 Shared Playback Presentation Adapter Checkpoint
+
+Buffered playback target selection and presentation commit policy now use one
+backend-neutral adapter contract. The contract consumes portable frame
+candidates with optional platform slot identities, uses 64-bit frame numbers,
+and emits exact, latest-at-or-before, or hold decisions. Commit policy treats a
+committable presentation independently from slot identity, so a retained Apple
+decode surface can advance presentation without pretending it belongs to an
+NVIDIA ring slot.
+
+The NVIDIA session controller supplies concrete ring-slot identities and keeps
+snapshot reads, leases, playback-state mutation, and compare-frame history
+release. The macOS adapter supplies slotless decoded frames and keeps
+AVFoundation deque eviction and retained pixel-buffer ownership. Metal,
+OpenGL, CUDA, FFmpeg, decoder scheduling, composite stimulus/crop alignment,
+and renderer ownership remain in their platform layers.
+
+Headless tests cover 64-bit targets, preferred exact slots, buffered fallback,
+paused/discontinuous gating, slotless and slotted commits, non-regression, and
+explicit-release policy. This completes the roadmap note that macOS should
+adopt the same portable target/commit lifecycle without imposing NVIDIA buffer
+semantics on the Apple backend.
+
+The policy contract is 64-bit, but both current platform transport boundaries
+remain legacy `int` surfaces: Apple decoded-frame metadata and the NVIDIA
+session-controller API narrow frame numbers before entering or leaving the
+adapter. End-to-end 64-bit playback remains a separate transport migration.
+
 ## Why This Exists
 
 `crimson` has already done useful mechanical splits, but the core architecture
@@ -14,9 +855,11 @@ still has three god-object pressure points:
 - `src/zarr_loader.h` plus `src/zarr_loader*.cpp` still expose a single large
   "load everything" API surface even after file splitting.
 
-This doc is the follow-on to `docs/crimson_cli_and_modularization_todo.md`.
-That doc intentionally left "AppState extraction from main()" out of scope.
-This doc covers that larger architectural pass.
+This doc supersedes the archived
+`docs/archive/legacy-plans/crimson_cli_and_modularization_todo.md`. That historical plan
+intentionally left "AppState extraction from main()" out of scope; this doc
+tracks the larger architectural pass and is the active source of remaining
+work.
 
 ## Primary Goal
 
@@ -456,6 +1299,13 @@ Acceptance:
   - `ReviewController`
   - `BBoxEditController`
   - `StimulusController`
+  - The portable recording-open lifecycle/timing controller is extracted and
+    used by both shells; platform media/storage execution and full loader
+    ownership remain to be extracted before `RecordingLoader` is complete.
+  - The portable playback transport/timing controller is extracted and used by
+    both shells; decoder scheduling, buffer policy, stimulus synchronization,
+    and graphics publication remain platform-owned before `PlaybackController`
+    is complete.
 - [ ] Replace direct mutation of unrelated globals with explicit command calls.
   - Example: "select detection dataset", "apply frame edits", "schedule seek",
     "reload archive", "mark review accepted".
@@ -467,17 +1317,25 @@ Acceptance:
 
 ### Phase 4a: Introduce Public Repository Facades
 
-- [ ] Introduce a small shared archive context layer.
+- [x] Introduce a small shared archive context layer.
   - Hold TensorStore context, kvstore, root path, and common metadata helpers.
   - This replaces the need for every domain service to rediscover the archive.
+  - `ArchiveContext` now owns the bounded TensorStore context/kvstore, root and
+    recording-root paths, common array specs, and affiliated-media discovery.
+    macOS retains it for strict repositories; Linux standard media discovery
+    now uses it, while full Linux session ownership remains a later extraction.
 - [ ] Split the public loader API by domain, even if implementation initially
       delegates to the current code:
-  - `DetectionRepository`
-  - `KeypointRepository`
-  - `EyeMaskRepository`
-  - `StimulusRepository`
+  - [x] `DetectionRepository`
+  - [x] `KeypointOverlayRepository` (read-only presentation)
+  - [x] `SubjectMaskOverlayRepository` (read-only presentation)
+  - [x] `StimulusRepository`
   - `MovementRepository`
-  - `ReviewWriteRepository`
+  - [x] `ReviewWriteRepository`
+  - The strict TensorStore and Linux legacy-loader subject-mask adapters now
+    feed the same scene contract. Linux mask editing, picking, ROI previews,
+    and eye-axis/angle geometry remain compatibility extensions rather than
+    responsibilities of the read-only repository.
 - [ ] Move call sites toward those facades before moving implementation.
 - [ ] Keep `ZarrDetectionLoader` as a backend adapter during this phase.
 
@@ -519,6 +1377,12 @@ Acceptance:
 - [ ] Keep Zarr as the primary store for both sparse and dense data.
 - [ ] Define sparse review/edit payloads explicitly instead of forcing every UI
       concern through dense arrays.
+- [ ] Use [crimson_zarr_keypoint_editor_plan.md](./crimson_zarr_keypoint_editor_plan.md)
+      as the keypoint-specific design reference for refined-run editing and
+      review acceptance.
+- [ ] Use [crimson_zarr_keypoint_review_window_plan.md](./crimson_zarr_keypoint_review_window_plan.md)
+      as the UI/workflow reference for replacing the legacy `Labeling Tool`
+      mental model with a Zarr-native review window.
 - [ ] For manual detection and keypoint review:
   - expose frame-local read/write APIs
   - preserve chunked storage for dense backing arrays where it matters

@@ -1,0 +1,69 @@
+{
+  "schema_id": "crimson.keypoint_v2.long_duration_experiment",
+  "schema_version": 1,
+  "description": "Mounted macOS interoperability exercise for the raw-v2 and refined-v2 Palette handoffs; not physical-profile promotion evidence.",
+  "workload": "keypoint_v2_long_duration_workload_v1.json",
+  "repetition_count": 5,
+  "timeout_seconds": 300.0,
+  "expected_crimson_commit": "d0aa35b553ba0be46f84961c44ccfc6493f1531c",
+  "evidence_files": [
+    {
+      "path": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/keypoint_storage/integration/20260128_cropv2_keypoint_v2_20260729_v4/handoff_manifest.json",
+      "sha256": "cd33ac60e2f72f614a0ea5f2583d08229b9dee22d2ddb2692a56a284f4f2d8c2"
+    },
+    {
+      "path": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/keypoint_storage/integration/20260128_cropv2_keypoint_refined_v2_20260729_v2/handoff_manifest.json",
+      "sha256": "d1c0e27303b715c95c645f077406906f691be2f9d86a74307425bb55465606b1"
+    }
+  ],
+  "candidates": [
+    {
+      "id": "raw_v2_integration",
+      "mode": "raw",
+      "description": "Raw observations v2 plus quality v1 and raw-derived body frame v1.",
+      "handoff_sha256": "cd33ac60e2f72f614a0ea5f2583d08229b9dee22d2ddb2692a56a284f4f2d8c2",
+      "raw": {
+        "store": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/keypoint_storage/integration/20260128_cropv2_keypoint_v2_20260729_v4/raw.zarr",
+        "run": "raw_keypoints_crop_v2_yolo_v2",
+        "manifest_digest": "227f0c80065a38d77604b0638bb16a22cd513b383609d364b4481a4fb0cf8db6"
+      },
+      "quality": {
+        "store": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/keypoint_storage/integration/20260128_cropv2_keypoint_v2_20260729_v4/quality.zarr",
+        "run": "keypoint_quality_crop_v2_v1",
+        "manifest_digest": "3d0af6dab6ca0ddc478c80755c040c2af2381e00166ee8a4cab7f8d9cb920e81"
+      },
+      "body_frame": {
+        "store": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/keypoint_storage/integration/20260128_cropv2_keypoint_v2_20260729_v4/body_frame.zarr",
+        "run": "body_frame_crop_v2_keypoints_v1",
+        "manifest_digest": "a8b12539669174bf20ebaf181b0c341148903588fc5ae27af46f94e24a2ab1af"
+      }
+    },
+    {
+      "id": "refined_v2_integration",
+      "mode": "refined",
+      "description": "Refined observations v2 with the same raw/quality sources and refined-derived body frame v1.",
+      "handoff_sha256": "d1c0e27303b715c95c645f077406906f691be2f9d86a74307425bb55465606b1",
+      "raw": {
+        "store": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/keypoint_storage/integration/20260128_cropv2_keypoint_v2_20260729_v4/raw.zarr",
+        "run": "raw_keypoints_crop_v2_yolo_v2",
+        "manifest_digest": "227f0c80065a38d77604b0638bb16a22cd513b383609d364b4481a4fb0cf8db6"
+      },
+      "quality": {
+        "store": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/keypoint_storage/integration/20260128_cropv2_keypoint_v2_20260729_v4/quality.zarr",
+        "run": "keypoint_quality_crop_v2_v1",
+        "manifest_digest": "3d0af6dab6ca0ddc478c80755c040c2af2381e00166ee8a4cab7f8d9cb920e81"
+      },
+      "refined": {
+        "store": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/keypoint_storage/integration/20260128_cropv2_keypoint_refined_v2_20260729_v2/refined.zarr",
+        "run": "refined_keypoints_crop_v2_synthetic_canary_v2",
+        "manifest_digest": "2f594135b69987c62591d9caeb2d12430a9bc5b2f639cbb42388d2a746728dc0"
+      },
+      "body_frame": {
+        "store": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/keypoint_storage/integration/20260128_cropv2_keypoint_refined_v2_20260729_v2/body_frame.zarr",
+        "run": "body_frame_refined_keypoints_canary_v1",
+        "manifest_digest": "857f7c6bd912f19a3b11bdfe8e3fb9bb68ba563aa9f0da6635947b9f324ff16b"
+      }
+    }
+  ],
+  "comparisons": []
+}

@@ -1,0 +1,19 @@
+{
+  "schema": "crimson.phase5n.stimulus-overlay-capture-set.v1",
+  "captured_at": "2026-07-18T21:20:17-0400",
+  "runtime": {
+    "platform": "macos",
+    "executable": "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/Crimson.app/Contents/MacOS/Crimson",
+    "executable_sha256": "3aaf4f85cc4a6eb67f1fe376c0b4bdbeff4e026c34fb21088f775abc8ac723a6"
+  },
+  "inputs": {
+    "video": "/Volumes/johnsonlab/jeremy/recordings/2026-06-14T21-12-08Z_arena_1_GoodCopBadCop/cams/Cam2010093_2026-06-14T21-12-08Z_arena_1.mp4",
+    "zarr": "/Volumes/johnsonlab/jeremy/recordings/2026-06-14T21-12-08Z_arena_1_GoodCopBadCop/zarr/2026-06-14T21-12-08Z_arena_1_GoodCopBadCop_analysis.zarr"
+  },
+  "logical_size": "1920x1080",
+  "capture": {
+    "state": "stimulus-overlay",
+    "frame": 1024,
+    "stem": "stimulus_overlay_exact_f001024_1920x1080"
+  }
+}
