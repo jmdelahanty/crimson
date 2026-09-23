@@ -37,6 +37,8 @@ struct BoundKeypointOverlayOpenRequest;
 struct BoundKeypointOverlayOpenMetrics;
 struct BoundSubjectShapeOverlayOpenRequest;
 struct SubjectShapeOverlayOpenMetrics;
+struct BoundEyeGeometryOverlayOpenRequest;
+struct BoundEyeGeometryOverlayOpenMetrics;
 struct TensorStoreChaserDistancePolarOptions;
 class TensorStoreChaserDistancePolarRepository;
 
@@ -101,6 +103,11 @@ private:
       const BoundSubjectShapeOverlayOpenRequest &request,
       std::string *error_message,
       SubjectShapeOverlayOpenMetrics *open_metrics);
+  friend std::unique_ptr<class EyeGeometryOverlayRepository>
+  OpenBoundEyeGeometryOverlayRepository(
+      const BoundEyeGeometryOverlayOpenRequest &request,
+      std::string *error_message,
+      BoundEyeGeometryOverlayOpenMetrics *open_metrics);
   friend std::unique_ptr<class CanonicalDetectionRepository>
   OpenCanonicalDetectionRepository(
       const std::shared_ptr<ArchiveContext> &archive,

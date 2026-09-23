@@ -1,6 +1,7 @@
 #pragma once
 
 #include "zarr/eye_geometry_overlay_repository.h"
+#include "data_access_scheduler.h"
 
 #include <chrono>
 #include <cstddef>
@@ -24,6 +25,9 @@ struct EyeGeometryOverlayBufferMetrics {
 class EyeGeometryOverlayBuffer {
 public:
   EyeGeometryOverlayBuffer();
+  EyeGeometryOverlayBuffer(
+      std::shared_ptr<crimson::data::DataAccessScheduler> scheduler,
+      std::string archive_identity);
   ~EyeGeometryOverlayBuffer();
 
   EyeGeometryOverlayBuffer(const EyeGeometryOverlayBuffer &) = delete;
@@ -35,6 +39,8 @@ public:
        size_t lookahead_frames = 6, size_t cache_capacity = 16,
        std::string *error = nullptr);
   void close();
+  // Cancel queued canonical work when eye overlays are no longer requested.
+  void suspend();
   bool isOpen() const;
 
   bool requestFrame(int64_t camera_frame, int full_frame_width,
@@ -47,6 +53,8 @@ public:
 
   crimson::zarr::EyeGeometryOverlayDescriptor descriptor() const;
   EyeGeometryOverlayBufferMetrics metrics() const;
+  crimson::zarr::EyeGeometryOverlayRepository::AccessMetrics
+  repositoryMetrics() const;
 
 private:
   struct Impl;

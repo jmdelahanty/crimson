@@ -64,6 +64,7 @@ struct NvidiaLaunchOptions {
   double frame_cap_fps = 0.0;
   bool mask_perf_log_enabled = true;
   bool show_eye_masks = false;
+  bool show_eye_geometry = false;
 
   PlaybackSmokeLaunchOptions playback_smoke;
   FrameRangeLaunchOptions clipped_boundary_smoke;

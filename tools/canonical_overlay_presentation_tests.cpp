@@ -17,6 +17,9 @@ gui::CanonicalOverlaySnapshot fixture() {
   selection->mask.run_id = "masks";
   selection->mask.manifest_payload_digest = "mask-digest";
   selection->shape.run_id = "shapes";
+  selection->eye.valid = true;
+  selection->eye.run_id = "eyes";
+  selection->eye.identity_digest = "eye-publication";
   value.selection = selection;
   value.keypoints.state = value.masks.state = value.shapes.state = gui::CanonicalOverlayState::Ready;
   value.keypoints.descriptor.run_name = "keypoints";
@@ -252,10 +255,79 @@ bool contoursJoinOnlyExactBoundRowsAndDoNotBlockFills() {
   }));
   return true;
 }
+bool eyesRequireExactSourceFrameAndKeys() {
+  auto makeEyes = [] {
+    auto value = fixture();
+    value.eyes.state = gui::CanonicalOverlayState::Ready;
+    value.eyes.descriptor.run_name = "eyes";
+    value.eyes.descriptor.source_subject_shape_run = "shapes";
+    value.eyes.descriptor.publication_identity_digest = "eye-publication";
+    value.eyes.descriptor.validated_instance_keys = true;
+    value.eyes.descriptor.coordinate_width = 384;
+    value.eyes.descriptor.coordinate_height = 384;
+    auto frame = std::make_shared<zarr::EyeGeometryOverlayResolution>();
+    frame->camera_frame = 54000;
+    frame->status = zarr::EyeGeometryOverlayStatus::Mapped;
+    for (uint64_t key : {std::numeric_limits<uint64_t>::max(), uint64_t{0}}) {
+      zarr::EyeGeometryOverlayDetection eye;
+      eye.instance_key_valid = true;
+      eye.instance_key = key;
+      eye.frame_valid = true;
+      eye.body_frame_valid = true;
+      eye.roi_x = 90; eye.roi_y = 190;
+      eye.roi_width = eye.roi_height = 384;
+      eye.body_origin = {20, 20};
+      eye.body_forward_axis = {1, 0};
+      eye.body_left_axis = {0, -1};
+      eye.eyes[0].valid = true;
+      eye.eyes[0].major_axis = {true, {10, 10}, {20, 10}};
+      eye.eyes[0].minor_axis = {true, {15, 5}, {15, 15}};
+      frame->detections.push_back(eye);
+    }
+    value.eyes.frame = frame;
+    return value;
+  };
+  auto output = present(makeEyes());
+  CHECK(output.snapshot.eyes.state == gui::CanonicalOverlayState::Ready);
+  CHECK(!output.eyes.primitives.empty());
+  auto reject = [&](auto mutate) {
+    auto value = makeEyes();
+    auto frame = std::make_shared<zarr::EyeGeometryOverlayResolution>(
+        *value.eyes.frame);
+    value.eyes.frame = frame;
+    mutate(value, *frame);
+    const auto rejected = present(value);
+    CHECK(rejected.snapshot.eyes.state == gui::CanonicalOverlayState::Failed);
+    CHECK(rejected.eyes.primitives.empty());
+    CHECK(rejected.keypoints_ready && rejected.shapes.ready());
+    return true;
+  };
+  CHECK(reject([](auto&, auto& frame) { frame.camera_frame = 53999; }));
+  CHECK(reject([](auto&, auto& frame) { frame.detections[0].instance_key = 99; }));
+  CHECK(reject([](auto&, auto& frame) {
+    frame.detections[0].instance_key = frame.detections[1].instance_key;
+  }));
+  CHECK(reject([](auto&, auto& frame) {
+    frame.detections[0].instance_key_valid = false;
+  }));
+  CHECK(reject([](auto& value, auto&) {
+    value.eyes.descriptor.publication_identity_digest = "wrong";
+  }));
+  CHECK(reject([](auto& value, auto&) {
+    value.eyes.descriptor.source_subject_shape_run = "wrong";
+  }));
+  auto only = makeEyes();
+  only.keypoints.frame.reset(); only.keypoints.state = gui::CanonicalOverlayState::Unavailable;
+  only.masks.frame.reset(); only.masks.state = gui::CanonicalOverlayState::Unavailable;
+  only.shapes.frame.reset(); only.shapes.state = gui::CanonicalOverlayState::Unavailable;
+  CHECK(!present(only).eyes.primitives.empty());
+  return true;
+}
 int main() {
   if (!joinsByKeyAndPreservesCoordinates() || !rejectsStaleOrUnboundProducts() ||
       !mismatchesDuplicatesAndEmptyFrames() ||
       !invalidInferenceGeometryDoesNotSuppressIndependentProducts() ||
-      !contoursJoinOnlyExactBoundRowsAndDoNotBlockFills()) return 1;
+      !contoursJoinOnlyExactBoundRowsAndDoNotBlockFills() ||
+      !eyesRequireExactSourceFrameAndKeys()) return 1;
   std::cout << "canonical_overlay_presentation_tests passed\n";
 }

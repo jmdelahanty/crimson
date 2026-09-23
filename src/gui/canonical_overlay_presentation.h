@@ -9,6 +9,7 @@ struct CanonicalOverlayPresentation {
   bool keypoints_ready = false;
   overlay::ReadOnlyOverlayScene masks;
   overlay::ReadOnlyOverlayScene shapes;
+  overlay::ReadOnlyOverlayScene eyes;
 };
 CanonicalOverlayPresentation makeCanonicalOverlayPresentation(
     CanonicalOverlaySnapshot snapshot, int view, int64_t presented_frame,

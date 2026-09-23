@@ -1,6 +1,7 @@
 #include "eye_geometry_overlay_buffer.h"
 
 #include <algorithm>
+#include <exception>
 #include <condition_variable>
 #include <deque>
 #include <limits>
@@ -32,12 +33,16 @@ struct EyeGeometryOverlayBuffer::Impl {
   mutable std::mutex mutex;
   mutable std::condition_variable condition;
   std::unique_ptr<crimson::zarr::EyeGeometryOverlayRepository> repository;
+  std::shared_ptr<crimson::data::DataAccessScheduler> scheduler;
+  std::string archive_identity;
+  crimson::data::SourceIdentity scheduler_source;
   crimson::zarr::EyeGeometryOverlayDescriptor descriptor;
   std::thread worker;
   bool stopping = false;
   size_t lookahead = 6;
   size_t capacity = 16;
   uint64_t generation = 1;
+  bool demanded = false;
   int64_t last_request = -1;
   std::deque<PendingRequest> pending;
   std::unordered_set<int64_t> pending_frames;
@@ -148,6 +153,14 @@ struct EyeGeometryOverlayBuffer::Impl {
 EyeGeometryOverlayBuffer::EyeGeometryOverlayBuffer()
     : impl_(std::make_unique<Impl>()) {}
 
+EyeGeometryOverlayBuffer::EyeGeometryOverlayBuffer(
+    std::shared_ptr<crimson::data::DataAccessScheduler> scheduler,
+    std::string archive_identity)
+    : impl_(std::make_unique<Impl>()) {
+  impl_->scheduler = std::move(scheduler);
+  impl_->archive_identity = std::move(archive_identity);
+}
+
 EyeGeometryOverlayBuffer::~EyeGeometryOverlayBuffer() { close(); }
 
 bool EyeGeometryOverlayBuffer::open(
@@ -162,26 +175,44 @@ bool EyeGeometryOverlayBuffer::open(
     assignError(error, "Eye-geometry cache capacity must be positive");
     return false;
   }
+  if (impl_->scheduler && !impl_->scheduler->running()) {
+    assignError(error, "Eye-geometry data scheduler is unavailable");
+    return false;
+  }
   {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     impl_->descriptor = repository->descriptor();
+    if (impl_->scheduler) {
+      impl_->scheduler_source = {
+          impl_->archive_identity.empty() ? "in_memory" : impl_->archive_identity,
+          "eye_geometry",
+          impl_->descriptor.source_group + "/" + impl_->descriptor.run_name};
+    }
     impl_->repository = std::move(repository);
     impl_->lookahead = std::min(lookahead_frames, cache_capacity - 1);
     impl_->capacity = cache_capacity;
     impl_->stopping = false;
     impl_->generation = 1;
     impl_->last_request = -1;
+    impl_->demanded = false;
     impl_->metrics = {};
   }
-  impl_->worker = std::thread([this] { impl_->run(); });
+  if (!impl_->scheduler)
+    impl_->worker = std::thread([this] { impl_->run(); });
   return true;
 }
 
 void EyeGeometryOverlayBuffer::close() {
+  crimson::data::SourceIdentity source;
   {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     impl_->stopping = true;
+    source = impl_->scheduler_source;
     impl_->condition.notify_all();
+  }
+  if (source.valid() && impl_->scheduler) {
+    impl_->scheduler->cancelSource(source);
+    impl_->scheduler->waitForSourceIdle(source);
   }
   if (impl_->worker.joinable()) {
     impl_->worker.join();
@@ -189,16 +220,30 @@ void EyeGeometryOverlayBuffer::close() {
   std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->repository.reset();
   impl_->descriptor = {};
+  impl_->scheduler_source = {};
   impl_->clearPendingLocked();
   impl_->clearCacheLocked();
   impl_->active_request.reset();
   impl_->stopping = false;
   impl_->last_request = -1;
+  impl_->demanded = false;
+}
+
+void EyeGeometryOverlayBuffer::suspend() {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  if (!impl_->scheduler || !impl_->demanded || impl_->stopping) return;
+  impl_->demanded = false;
+  ++impl_->generation;
+  impl_->scheduler->cancelSource(impl_->scheduler_source);
+  impl_->clearCacheLocked();
+  impl_->last_request = -1;
+  impl_->condition.notify_all();
 }
 
 bool EyeGeometryOverlayBuffer::isOpen() const {
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  return impl_->repository != nullptr && impl_->worker.joinable() &&
+  return impl_->repository != nullptr &&
+         (impl_->worker.joinable() || impl_->scheduler != nullptr) &&
          !impl_->stopping;
 }
 
@@ -217,12 +262,15 @@ bool EyeGeometryOverlayBuffer::requestFrame(int64_t camera_frame,
     return false;
   }
   ++impl_->metrics.requests;
+  impl_->demanded = true;
   const bool jumped = impl_->last_request >= 0 &&
                       (camera_frame < impl_->last_request ||
                        camera_frame - impl_->last_request >
                            static_cast<int64_t>(impl_->lookahead) + 2);
   if (discontinuity || jumped) {
     ++impl_->generation;
+    if (impl_->scheduler)
+      impl_->scheduler->cancelSource(impl_->scheduler_source);
     impl_->clearPendingLocked();
     impl_->clearCacheLocked();
   }
@@ -246,6 +294,86 @@ bool EyeGeometryOverlayBuffer::requestFrame(int64_t camera_frame,
   impl_->retainPendingWindowLocked(camera_frame, final_frame);
   if (impl_->cache.find(camera_frame) != impl_->cache.end()) {
     ++impl_->metrics.cache_hits;
+  }
+  if (impl_->scheduler) {
+    impl_->scheduler->retainSourceRange(
+        impl_->scheduler_source, impl_->generation,
+        {camera_frame, final_frame});
+    for (int64_t frame = camera_frame; frame <= final_frame; ++frame) {
+      if (impl_->cache.find(frame) != impl_->cache.end()) continue;
+      const uint64_t generation = impl_->generation;
+      crimson::data::DataRangeRequest request{
+          impl_->scheduler_source, {frame, frame},
+          crimson::data::FieldSelection::All(),
+          frame == camera_frame ? crimson::data::RequestPriority::CurrentFrame
+                                : crimson::data::RequestPriority::Speculative,
+          discontinuity ? crimson::data::AccessPattern::RandomSeek
+                        : crimson::data::AccessPattern::Forward,
+          generation};
+      const auto outcome = impl_->scheduler->submit(
+          std::move(request),
+          [this, frame, full_frame_width, full_frame_height, generation](
+              const crimson::data::ScheduledDataRequest& scheduled) {
+            if (scheduled.cancellation.cancelled())
+              return crimson::data::DataResultStatus::Stale;
+            const auto start = std::chrono::steady_clock::now();
+            crimson::zarr::EyeGeometryOverlayResolution resolved;
+            try {
+              resolved = impl_->repository->resolveCameraFrame(
+                  frame, full_frame_width, full_frame_height);
+            } catch (const std::exception& exception) {
+              resolved.camera_frame = frame;
+              resolved.status = crimson::zarr::EyeGeometryOverlayStatus::ReadFailed;
+              resolved.error = exception.what();
+            } catch (...) {
+              resolved.camera_frame = frame;
+              resolved.status = crimson::zarr::EyeGeometryOverlayStatus::ReadFailed;
+              resolved.error = "Eye reader threw an unknown exception";
+            }
+            const double elapsed_ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - start).count();
+            auto shared = std::make_shared<
+                const crimson::zarr::EyeGeometryOverlayResolution>(
+                std::move(resolved));
+            std::lock_guard<std::mutex> callback_lock(impl_->mutex);
+            impl_->metrics.maximum_resolve_ms =
+                std::max(impl_->metrics.maximum_resolve_ms, elapsed_ms);
+            if (scheduled.cancellation.cancelled() || impl_->stopping ||
+                !impl_->demanded || generation != impl_->generation) {
+              ++impl_->metrics.discarded_results;
+              impl_->condition.notify_all();
+              return crimson::data::DataResultStatus::Stale;
+            }
+            auto status = crimson::data::DataResultStatus::Failed;
+            switch (shared->status) {
+              case crimson::zarr::EyeGeometryOverlayStatus::Mapped:
+                ++impl_->metrics.resolved_frames;
+                status = crimson::data::DataResultStatus::Ready;
+                break;
+              case crimson::zarr::EyeGeometryOverlayStatus::Missing:
+              case crimson::zarr::EyeGeometryOverlayStatus::OutOfRange:
+                ++impl_->metrics.missing_frames;
+                status = crimson::data::DataResultStatus::Missing;
+                break;
+              case crimson::zarr::EyeGeometryOverlayStatus::InvalidDimensions:
+              case crimson::zarr::EyeGeometryOverlayStatus::ReadFailed:
+                ++impl_->metrics.failed_frames;
+                impl_->metrics.last_error = shared->error;
+                break;
+            }
+            impl_->publishLocked(frame, std::move(shared));
+            impl_->condition.notify_all();
+            return status;
+          });
+      if (frame == camera_frame && !outcome.accepted()) {
+        assignError(error, "Eye scheduler rejected current frame");
+        return false;
+      }
+    }
+    impl_->metrics.peak_pending_frames = std::max(
+        impl_->metrics.peak_pending_frames,
+        impl_->scheduler->metrics().queue.pending_requests);
+    return true;
   }
   for (int64_t frame = camera_frame; frame <= final_frame; ++frame) {
     if (impl_->cache.find(frame) != impl_->cache.end() ||
@@ -290,4 +418,11 @@ EyeGeometryOverlayBuffer::descriptor() const {
 EyeGeometryOverlayBufferMetrics EyeGeometryOverlayBuffer::metrics() const {
   std::lock_guard<std::mutex> lock(impl_->mutex);
   return impl_->metrics;
+}
+
+crimson::zarr::EyeGeometryOverlayRepository::AccessMetrics
+EyeGeometryOverlayBuffer::repositoryMetrics() const {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  return impl_->repository ? impl_->repository->accessMetrics()
+                           : crimson::zarr::EyeGeometryOverlayRepository::AccessMetrics{};
 }

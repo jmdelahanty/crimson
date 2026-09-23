@@ -37,6 +37,9 @@ struct EyeGeometryEye {
 struct EyeGeometryOverlayDescriptor {
   std::string source_group;
   std::string run_name;
+  std::string source_subject_shape_run;
+  std::string publication_identity_digest;
+  bool validated_instance_keys = false;
   std::string source_refined_subject_masks_run;
   std::string source_crop_run;
   std::string schema_id;
@@ -53,6 +56,8 @@ struct EyeGeometryOverlayDescriptor {
 
 struct EyeGeometryOverlayRow {
   size_t eye_row = 0;
+  uint64_t instance_key = 0;
+  bool instance_key_valid = false;
   int64_t camera_frame = -1;
   int64_t detection_index = -1;
   int64_t source_crop_row_id = -1;
@@ -95,6 +100,13 @@ public:
   resolveCameraFrame(int64_t camera_frame, int full_frame_width,
                      int full_frame_height) const = 0;
   virtual RepositoryMemoryMetrics memoryMetrics() const { return {}; }
+  struct AccessMetrics {
+    uint64_t payload_read_calls = 0;
+    uint64_t logical_payload_bytes_read = 0;
+    uint64_t retained_decoded_cache_bytes = 0;
+    uint64_t cache_hits = 0;
+  };
+  virtual AccessMetrics accessMetrics() const { return {}; }
 };
 
 std::unique_ptr<EyeGeometryOverlayRepository>

@@ -11,6 +11,8 @@
 #include "gui/subject_shape_overlay_inspect_adapter.h"
 #include "gui/camera_view_subject_shape_controls_adapter.h"
 #include "gui/subject_shape_overlay_controls.h"
+#include "gui/eye_geometry_overlay_controls.h"
+#include "gui/eye_geometry_overlay_inspect_adapter.h"
 
 #include "imgui.h"
 
@@ -21,6 +23,7 @@ FrameDebugWindowResult drawFrameDebugWindow(const FrameDebugWindowContext& conte
     result.show_keypoint_markers = context.show_keypoint_markers;
     result.show_heading_arrows = context.show_heading_arrows;
     result.show_eye_masks = context.show_eye_masks;
+    result.show_eye_geometry = context.show_eye_geometry;
     result.show_subject_body_mask = context.show_subject_body_mask;
     result.show_eye_left_mask = context.show_eye_left_mask;
     result.show_eye_right_mask = context.show_eye_right_mask;
@@ -68,11 +71,13 @@ FrameDebugWindowResult drawFrameDebugWindow(const FrameDebugWindowContext& conte
                 ? "Masks / Shape" : frameDebugModuleLabel(context, view),
             context.zarr_loaded &&
                 ((context.canonical_overlays &&
-                  (view == FrameInspectView::Keypoints || view == FrameInspectView::EyeMasks)) ||
+                  (view == FrameInspectView::Keypoints || view == FrameInspectView::EyeMasks ||
+                   view == FrameInspectView::EyeAngles)) ||
                  frameDebugModuleAvailable(context, module_catalog, view)),
             [&, view]() {
                 if (context.canonical_overlays &&
-                    (view == FrameInspectView::Keypoints || view == FrameInspectView::EyeMasks)) {
+                    (view == FrameInspectView::Keypoints || view == FrameInspectView::EyeMasks ||
+                     view == FrameInspectView::EyeAngles)) {
                     const auto& snapshot = *context.canonical_overlays;
                     const auto show_status = [](const char* label, const auto& product) {
                         ImGui::Text("%s: %s", label, crimson::gui::canonicalOverlayStateName(product.state));
@@ -88,6 +93,25 @@ FrameDebugWindowResult drawFrameDebugWindow(const FrameDebugWindowContext& conte
                             snapshot.keypoints.frame.get(), snapshot.requested_frame);
                         crimson::gui::drawFrameInspectKeypointModule(presentation, state.canonical_keypoint_inspect);
                         ImGui::TextDisabled("Heading authority: the exact bound subject-shape body frame.");
+                    } else if (view == FrameInspectView::EyeAngles) {
+                        crimson::gui::EyeGeometryOverlayControlState controls{
+                            result.show_eye_geometry, result.show_eye_direction_beams,
+                            result.show_eye_gaze_rays, result.show_eye_angle_arcs,
+                            result.show_eye_angle_labels};
+                        crimson::gui::drawEyeGeometryOverlayControls(
+                            controls, {!snapshot.eyes.descriptor.run_name.empty(), true});
+                        result.show_eye_geometry = controls.show_overlay;
+                        result.show_eye_direction_beams = controls.show_direction_beams;
+                        result.show_eye_gaze_rays = controls.show_gaze_rays;
+                        result.show_eye_angle_arcs = controls.show_angle_arcs;
+                        result.show_eye_angle_labels = controls.show_angle_labels;
+                        show_status("Eye geometry", snapshot.eyes);
+                        if (!controls.show_overlay)
+                            ImGui::TextDisabled("Enable eye geometry to request per-observation data.");
+                        auto eyes = crimson::gui::makeEyeGeometryOverlayInspectPresentation(
+                            snapshot.eyes.descriptor.run_name.empty() ? nullptr : &snapshot.eyes.descriptor,
+                            snapshot.eyes.frame.get(), snapshot.requested_frame);
+                        crimson::gui::drawFrameInspectEyeAngleModule(eyes, state.eye_angle_inspect);
                     } else {
                         ImGui::Checkbox("Show subject masks", &result.show_eye_masks);
                         ImGui::Checkbox("Body", &result.show_subject_body_mask);

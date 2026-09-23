@@ -59,13 +59,16 @@ struct CanonicalOverlaySession::Impl {
     std::shared_ptr<SubjectMaskOverlayBuffer> masks;
     std::shared_ptr<SubjectMaskOverlayBuffer> mask_contours;
     std::shared_ptr<SubjectShapeOverlayBuffer> shapes;
-    std::string keypoint_error, mask_error, mask_contour_error, shape_error;
+    std::shared_ptr<EyeGeometryOverlayBuffer> eyes;
+    std::string keypoint_error, mask_error, mask_contour_error, shape_error,
+        eye_error;
     double open_ms = 0;
     void retire() {
       if (keypoints) keypoints->close();
       if (masks) masks->close();
       if (mask_contours) mask_contours->close();
       if (shapes) shapes->close();
+      if (eyes) eyes->close();
     }
   };
   std::shared_ptr<data::DataAccessScheduler> scheduler;
@@ -126,6 +129,7 @@ struct CanonicalOverlaySession::Impl {
           candidate->mask_contour_error =
               std::move(repositories.mask_contour_error);
           candidate->shape_error = std::move(repositories.shape_error);
+          candidate->eye_error = std::move(repositories.eye_error);
           const auto identity = request.archive_path + ":canonical-overlay:" +
                                 std::to_string(session_identity) + ":" + std::to_string(version);
           // Overlay demand is bounded by each typed buffer policy. Mask
@@ -161,8 +165,16 @@ struct CanonicalOverlaySession::Impl {
                                         &candidate->shape_error))
               candidate->shapes.reset();
           }
+          if (repositories.eyes) {
+            candidate->eyes = std::make_shared<EyeGeometryOverlayBuffer>(
+                scheduler, identity + ":eyes");
+            if (!candidate->eyes->open(std::move(repositories.eyes), 2, 8,
+                                       &candidate->eye_error))
+              candidate->eyes.reset();
+          }
           candidate->open_ms = std::chrono::duration<double, std::milli>(Clock::now() - started).count();
-          if (!candidate->keypoints && !candidate->masks && !candidate->shapes)
+          if (!candidate->keypoints && !candidate->masks && !candidate->shapes &&
+              !candidate->eyes)
             open_error = "No bound canonical overlay product could be opened";
         }
       } catch (const std::exception& exception) {
@@ -231,7 +243,7 @@ bool CanonicalOverlaySession::requestFrame(int64_t frame, bool keypoints,
                                           bool masks, bool shapes,
                                           bool discontinuity,
                                           CanonicalOverlayPlaybackDemand playback,
-                                          bool mask_contours) {
+                                          bool mask_contours, bool eyes) {
   std::shared_ptr<Impl::Epoch> epoch;
   {
     std::lock_guard<std::mutex> lock(impl_->mutex);
@@ -271,6 +283,13 @@ bool CanonicalOverlaySession::requestFrame(int64_t frame, bool keypoints,
   }
   if (shapes && epoch->shapes)
     accepted = epoch->shapes->requestFrame(frame, width, height, discontinuity) && accepted;
+  if (epoch->eyes) {
+    if (eyes)
+      accepted = epoch->eyes->requestFrame(frame, width, height,
+                                           discontinuity) && accepted;
+    else
+      epoch->eyes->suspend();
+  }
   return accepted;
 }
 CanonicalOverlaySnapshot CanonicalOverlaySession::snapshot(int64_t frame) const {
@@ -293,6 +312,11 @@ CanonicalOverlaySnapshot CanonicalOverlaySession::snapshot(int64_t frame) const 
     populate(result.mask_contours, epoch->mask_contours,
              epoch->mask_contour_error, frame);
     populate(result.shapes, epoch->shapes, epoch->shape_error, frame);
+    populate(result.eyes, epoch->eyes, epoch->eye_error, frame);
+    if (epoch->eyes) {
+      result.eye_buffer_metrics = epoch->eyes->metrics();
+      result.eye_metrics = epoch->eyes->repositoryMetrics();
+    }
     if (epoch->masks) {
       result.mask_metrics = epoch->masks->repositoryMetrics();
       result.mask_buffer_metrics = epoch->masks->metrics();
@@ -303,7 +327,7 @@ CanonicalOverlaySnapshot CanonicalOverlaySession::snapshot(int64_t frame) const 
     }
   } else if (result.state == CanonicalOverlayState::Opening) {
     result.keypoints.state = result.masks.state = result.mask_contours.state =
-        result.shapes.state = CanonicalOverlayState::Opening;
+        result.shapes.state = result.eyes.state = CanonicalOverlayState::Opening;
   }
   {
     std::lock_guard<std::mutex> lock(impl_->mutex);

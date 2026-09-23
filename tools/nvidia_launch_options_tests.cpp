@@ -47,6 +47,9 @@ bool testDefaultsAndUnknownArguments() {
   CHECK(result.options.frame_cap_fps == 0.0);
   CHECK(result.options.mask_perf_log_enabled);
   CHECK(result.options.mask_perf_sample_every == 10);
+  CHECK(!result.options.show_eye_geometry);
+  CHECK(parse({"redgui", "--show-eye-geometry"}).options.show_eye_geometry);
+  CHECK(!parse({"redgui", "--show-eye-geometry", "--no-eye-geometry"}).options.show_eye_geometry);
   CHECK(result.options.playback_smoke.timeout_s == 20.0);
   CHECK(result.options.playback_smoke.warmup_s == 0.0);
   auto warmup = parse({"redgui", "--playback-smoke", "0:300",

@@ -523,6 +523,7 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         src/zarr/canonical_overlay_selection.cpp
         src/zarr/tensorstore_bound_keypoint_overlay_repository.cpp
         src/zarr/tensorstore_bound_subject_shape_overlay_repository.cpp
+        src/zarr/tensorstore_bound_eye_geometry_overlay_repository.cpp
         src/zarr/refined_detection_contract.cpp
         src/zarr/subject_mask_bundle_v2_contract.cpp
         src/zarr/subject_mask_sampled_contour_v1_contract.cpp
@@ -1413,6 +1414,28 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     )
 
+    add_executable(bound_eye_geometry_overlay_probe
+        tools/bound_eye_geometry_overlay_probe.cpp)
+    target_compile_features(bound_eye_geometry_overlay_probe PRIVATE cxx_std_17)
+    target_link_libraries(bound_eye_geometry_overlay_probe PRIVATE
+        crimson_overlay_contracts crimson_tensorstore_repositories ${tensorstore_target})
+    set_target_properties(bound_eye_geometry_overlay_probe PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+
+    add_executable(bound_eye_geometry_overlay_repository_tests
+        tools/bound_eye_geometry_overlay_repository_tests.cpp)
+    target_compile_features(bound_eye_geometry_overlay_repository_tests PRIVATE cxx_std_17)
+    target_link_libraries(bound_eye_geometry_overlay_repository_tests PRIVATE
+        crimson_overlay_contracts crimson_tensorstore_repositories ${tensorstore_target})
+    set_target_properties(bound_eye_geometry_overlay_repository_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME bound_eye_geometry_overlay_repository_tests
+        COMMAND $<TARGET_FILE:bound_eye_geometry_overlay_repository_tests>)
+    set_tests_properties(bound_eye_geometry_overlay_repository_tests PROPERTIES
+        LABELS "eye-geometry;headless;overlay;portable;repository;tensorstore;zarr"
+        TIMEOUT 60
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+
     add_executable(eye_angle_timeline_repository_probe
         tools/eye_angle_timeline_repository_probe.cpp
     )
@@ -1569,6 +1592,30 @@ set_tests_properties(loading_work_runner_tests PROPERTIES
     LABELS "headless;portable;runtime" TIMEOUT 30)
 
 # Shared loading modal geometry regression, runnable without a window system.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui/imgui.cpp" AND
+   EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/implot/implot.cpp")
+    add_executable(camera_view_vector_scene_draw_tests
+        tools/camera_view_vector_scene_draw_tests.cpp
+        src/gui/camera_view_vector_scene_draw.cpp
+        third_party/imgui/imgui.cpp
+        third_party/imgui/imgui_draw.cpp
+        third_party/imgui/imgui_tables.cpp
+        third_party/imgui/imgui_widgets.cpp
+        third_party/implot/implot.cpp
+        third_party/implot/implot_items.cpp)
+    target_compile_features(camera_view_vector_scene_draw_tests PRIVATE cxx_std_17)
+    target_include_directories(camera_view_vector_scene_draw_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/implot)
+    target_link_libraries(camera_view_vector_scene_draw_tests PRIVATE
+        crimson_overlay_contracts)
+    add_test(NAME camera_view_vector_scene_draw_tests
+        COMMAND camera_view_vector_scene_draw_tests)
+    set_tests_properties(camera_view_vector_scene_draw_tests PROPERTIES
+        LABELS "headless;ui;overlay;eye-geometry;portable" TIMEOUT 30)
+endif()
+
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui/imgui.cpp")
     add_executable(session_loading_modal_layout_tests
         tools/session_loading_modal_layout_tests.cpp
@@ -3168,6 +3215,7 @@ list(REMOVE_ITEM CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/canonical_overlay_selection.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_bound_keypoint_overlay_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_bound_subject_shape_overlay_repository.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_bound_eye_geometry_overlay_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_stimulus_context_timeline_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_swim_bout_timeline_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_stimulus_repository.cpp"

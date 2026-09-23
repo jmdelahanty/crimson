@@ -78,6 +78,52 @@ class Reader : public crimson::zarr::KeypointOverlayRepository {
   std::shared_ptr<Gate> gate_;
 };
 
+struct EyeReaderState {
+  std::mutex mutex;
+  std::vector<int64_t> reads;
+  std::shared_ptr<Gate> gate;
+};
+class EyeReader : public crimson::zarr::EyeGeometryOverlayRepository {
+ public:
+  explicit EyeReader(std::shared_ptr<EyeReaderState> state)
+      : state_(std::move(state)) {
+    descriptor_.source_group = "eye_angle_runs";
+    descriptor_.run_name = "bound-eyes";
+    descriptor_.camera_frame_count = 20;
+    descriptor_.coordinate_width = descriptor_.coordinate_height = 100;
+  }
+  const crimson::zarr::EyeGeometryOverlayDescriptor& descriptor() const override {
+    return descriptor_;
+  }
+  AccessMetrics accessMetrics() const override {
+    std::lock_guard<std::mutex> lock(state_->mutex);
+    AccessMetrics metrics;
+    metrics.payload_read_calls = state_->reads.size();
+    metrics.logical_payload_bytes_read = state_->reads.size() * 64;
+    return metrics;
+  }
+  crimson::zarr::EyeGeometryOverlayResolution resolveCameraFrame(
+      int64_t frame, int, int) const override {
+    {
+      std::lock_guard<std::mutex> lock(state_->mutex);
+      state_->reads.push_back(frame);
+    }
+    if (frame == 4 && state_->gate) state_->gate->block();
+    if (frame == 6) throw std::runtime_error("fixture eye read failure");
+    crimson::zarr::EyeGeometryOverlayResolution result;
+    result.camera_frame = frame == 8 ? 9 : frame;
+    result.status = crimson::zarr::EyeGeometryOverlayStatus::Mapped;
+    crimson::zarr::EyeGeometryOverlayDetection eye;
+    eye.instance_key = 7;
+    eye.instance_key_valid = true;
+    result.detections.push_back(eye);
+    return result;
+  }
+ private:
+  crimson::zarr::EyeGeometryOverlayDescriptor descriptor_;
+  std::shared_ptr<EyeReaderState> state_;
+};
+
 struct MaskReaderState {
   std::mutex mutex;
   std::vector<int64_t> reads;
@@ -457,11 +503,70 @@ bool testIndependentContourDemandAndFailure() {
   scheduler->shutdown();
   return true;
 }
+bool testIndependentEyeDemandAndSeek() {
+  auto scheduler = std::make_shared<crimson::data::DataAccessScheduler>(32, 3, 1, 1);
+  auto eye_state = std::make_shared<EyeReaderState>();
+  eye_state->gate = std::make_shared<Gate>();
+  crimson::gui::CanonicalOverlaySession session(
+      scheduler, [eye_state](const auto& r) {
+        auto result = opened(r.archive_path);
+        result.eyes = std::make_unique<EyeReader>(eye_state);
+        return result;
+      });
+  CHECK(session.beginOpen(request("eyes-only-demand")));
+  CHECK(session.waitUntilOpen(3s));
+  CHECK(session.requestFrame(2, true, false, false));
+  CHECK(waitFrame(session, 2));
+  CHECK(session.snapshot(2).eye_metrics.payload_read_calls == 0);
+  { std::lock_guard<std::mutex> lock(eye_state->mutex);
+    CHECK(eye_state->reads.empty()); }
+  CHECK(session.requestFrame(4, false, false, false, true, {}, false, true));
+  const bool eye_read_started = eye_state->gate->wait();
+  const bool requested_after_seek = session.requestFrame(
+      5, true, false, false, true, {}, false, true);
+  const bool keypoint_ready_while_eye_blocked =
+      requested_after_seek && waitFrame(session, 5);
+  eye_state->gate->release();
+  CHECK(eye_read_started);
+  CHECK(requested_after_seek);
+  CHECK(keypoint_ready_while_eye_blocked);
+  const auto deadline = std::chrono::steady_clock::now() + 3s;
+  while (std::chrono::steady_clock::now() < deadline &&
+         !session.snapshot(5).eyes.frame) std::this_thread::sleep_for(1ms);
+  CHECK(session.snapshot(5).eyes.state == CanonicalOverlayState::Ready);
+  CHECK(session.snapshot(5).eye_metrics.payload_read_calls > 0);
+  CHECK(!session.snapshot(4).eyes.frame);
+  CHECK(session.snapshot(5).keypoints.state == CanonicalOverlayState::Ready);
+  CHECK(session.requestFrame(6, false, false, false, true, {}, false, true));
+  const auto failed_deadline = std::chrono::steady_clock::now() + 3s;
+  while (std::chrono::steady_clock::now() < failed_deadline &&
+         session.snapshot(6).eyes.state == CanonicalOverlayState::Pending)
+    std::this_thread::sleep_for(1ms);
+  CHECK(session.snapshot(6).eyes.state == CanonicalOverlayState::Failed);
+  CHECK(!session.snapshot(6).eyes.error.empty());
+  CHECK(session.requestFrame(7, false, false, false, true, {}, false, true));
+  const auto ready_deadline = std::chrono::steady_clock::now() + 3s;
+  while (std::chrono::steady_clock::now() < ready_deadline &&
+         !session.snapshot(7).eyes.frame) std::this_thread::sleep_for(1ms);
+  CHECK(session.snapshot(7).eyes.state == CanonicalOverlayState::Ready);
+  CHECK(session.requestFrame(8, false, false, false, true, {}, false, true));
+  const auto mismatch_deadline = std::chrono::steady_clock::now() + 3s;
+  while (std::chrono::steady_clock::now() < mismatch_deadline &&
+         session.snapshot(8).eyes.state == CanonicalOverlayState::Pending)
+    std::this_thread::sleep_for(1ms);
+  CHECK(session.snapshot(8).eyes.state == CanonicalOverlayState::Failed);
+  CHECK(session.requestFrame(9, false, false, false, true));
+  CHECK(!session.snapshot(7).eyes.frame);
+  session.shutdown();
+  scheduler->shutdown();
+  return true;
+}
 int main() {
   if (!testSnapshotsAndFailures() || !testSupersededOpen() ||
       !testNonblockingCloseAndSourceIsolation() ||
       !testMaskReadAheadAtRenderRate(30) ||
       !testMaskReadAheadAtRenderRate(60) ||
-      !testIndependentContourDemandAndFailure()) return 1;
+      !testIndependentContourDemandAndFailure() ||
+      !testIndependentEyeDemandAndSeek()) return 1;
   std::cout << "canonical_overlay_session_tests passed\n";
 }

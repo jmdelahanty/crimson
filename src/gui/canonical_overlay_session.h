@@ -2,6 +2,7 @@
 
 #include "data_access_scheduler.h"
 #include "subject_mask_overlay_buffer.h"
+#include "eye_geometry_overlay_buffer.h"
 #include "zarr/canonical_overlay_selection.h"
 #include "zarr/keypoint_overlay_repository.h"
 #include "zarr/subject_mask_overlay_repository.h"
@@ -49,7 +50,9 @@ struct CanonicalOverlayRepositories {
   std::unique_ptr<zarr::SubjectMaskOverlayRepository> masks;
   std::unique_ptr<zarr::SubjectMaskOverlayRepository> mask_contours;
   std::unique_ptr<zarr::SubjectShapeOverlayRepository> shapes;
-  std::string keypoint_error, mask_error, mask_contour_error, shape_error, error;
+  std::unique_ptr<zarr::EyeGeometryOverlayRepository> eyes;
+  std::string keypoint_error, mask_error, mask_contour_error, shape_error,
+      eye_error, error;
 };
 using CanonicalOverlayOpenFunction =
     std::function<CanonicalOverlayRepositories(const CanonicalOverlayOpenRequest&)>;
@@ -74,6 +77,10 @@ struct CanonicalOverlaySnapshot {
                                   zarr::SubjectMaskOverlayResolution> mask_contours;
   CanonicalOverlayProductSnapshot<zarr::SubjectShapeOverlayDescriptor,
                                   zarr::SubjectShapeOverlayResolution> shapes;
+  CanonicalOverlayProductSnapshot<zarr::EyeGeometryOverlayDescriptor,
+                                  zarr::EyeGeometryOverlayResolution> eyes;
+  EyeGeometryOverlayBufferMetrics eye_buffer_metrics;
+  zarr::EyeGeometryOverlayRepository::AccessMetrics eye_metrics;
   zarr::SubjectMaskOverlayRepositoryMetrics mask_metrics;
   SubjectMaskOverlayBufferMetrics mask_buffer_metrics;
   zarr::SubjectMaskOverlayRepositoryMetrics mask_contour_metrics;
@@ -100,7 +107,7 @@ class CanonicalOverlaySession {
   bool requestFrame(int64_t frame, bool keypoints, bool masks, bool shapes,
                     bool discontinuity = false,
                     CanonicalOverlayPlaybackDemand playback = {},
-                    bool mask_contours = false);
+                    bool mask_contours = false, bool eyes = false);
   CanonicalOverlaySnapshot snapshot(int64_t frame) const;
   bool waitUntilOpen(std::chrono::milliseconds timeout) const;
 

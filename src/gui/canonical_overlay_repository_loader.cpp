@@ -6,6 +6,7 @@
 #include "zarr/tensorstore_subject_mask_overlay_repository.h"
 #include "zarr/tensorstore_subject_shape_overlay_repository.h"
 #include "zarr/tensorstore_bound_subject_shape_overlay_repository.h"
+#include "zarr/tensorstore_bound_eye_geometry_overlay_repository.h"
 
 #include <exception>
 
@@ -109,6 +110,21 @@ CanonicalOverlayRepositories openCanonicalOverlayRepositories(
         result.shape_error = "Bound shape frame domain disagrees with indexed video";
       }
     }, result.shape_error);
+  }
+  result.eye_error = selection->eye.error;
+  if (selection->eye.valid) {
+    open_product([&] {
+      zarr::BoundEyeGeometryOverlayOpenRequest eyes;
+      eyes.archive = archive;
+      eyes.selection = *selection;
+      result.eyes = zarr::OpenBoundEyeGeometryOverlayRepository(
+          eyes, &result.eye_error);
+      if (result.eyes && result.eyes->descriptor().camera_frame_count !=
+                             request.frame_count) {
+        result.eyes.reset();
+        result.eye_error = "Bound eye frame domain disagrees with indexed video";
+      }
+    }, result.eye_error);
   }
   return result;
 }

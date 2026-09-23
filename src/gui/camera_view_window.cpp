@@ -1135,6 +1135,12 @@ CameraViewWindowResult drawCameraViewWindowContents(
                                     image_height_px);
                             }
                         }
+                        if (context.eye_geometry_scene != nullptr) {
+                            // Independent of dense-mask readiness; draw above fills.
+                            drawCameraViewReadOnlyOverlayScene(
+                                *context.eye_geometry_scene, image_height_px,
+                                &result.perf.mask_overlay);
+                        }
                         break;
                     case CameraOverlayLayer::SubjectShape:
                         if (context.subject_shape_scene != nullptr) {

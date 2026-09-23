@@ -552,6 +552,9 @@ int main(int argc, char **argv) {
   int canonical_expected_mask_draw_count = 0;
   int canonical_expected_contour_draw_count = 0;
   int canonical_actual_contour_draw_count = 0;
+  int canonical_expected_eye_label_count = 0;
+  int canonical_expected_eye_cone_count = 0;
+  int canonical_expected_eye_overlap_count = 0;
   json canonical_shape_expected_labels = json::object();
   json canonical_mask_expected_contour_labels = json::object();
   crimson::gui::DetectionQualityTimelineControls
@@ -601,6 +604,7 @@ int main(int argc, char **argv) {
   bool show_keypoint_markers = true;
   bool show_heading_arrows = true;
   bool show_eye_masks = cli_show_eye_masks;
+  bool show_canonical_eye_geometry = launch_options.show_eye_geometry;
   bool show_subject_body_mask = true;
   bool show_eye_left_mask = true;
   bool show_eye_right_mask = true;
@@ -1191,14 +1195,14 @@ int main(int argc, char **argv) {
   std::string canonical_detection_last_request_error;
   uint64_t canonical_overlay_seen_seek_requests = 0;
   auto requestCanonicalOverlayFrame = [&](int frame, bool keypoints, bool masks,
-                                          bool shapes, bool mask_contours) {
+                                          bool shapes, bool mask_contours, bool eyes) {
     const uint64_t seek_requests = playback_transport.seekCoordinator().metrics().requests;
     const bool accepted = canonical_overlay_session.requestFrame(
         frame, keypoints, masks, shapes,
         seek_requests != canonical_overlay_seen_seek_requests,
         {true, ps.play_video ? crimson::gui::CanonicalOverlayPlaybackDirection::Forward
                             : crimson::gui::CanonicalOverlayPlaybackDirection::Paused,
-         video_fps, playback_transport.playbackRate()}, mask_contours);
+         video_fps, playback_transport.playbackRate()}, mask_contours, eyes);
     // A partial product rejection must not repeatedly invalidate products
     // which already accepted this seek. New opens have their own source epoch.
     canonical_overlay_seen_seek_requests = seek_requests;
@@ -3655,7 +3659,7 @@ int main(int argc, char **argv) {
         requestCanonicalOverlayFrame(current_frame_num, true,
             show_eye_masks || inspect_masks || subject_shape_needs_contours,
             subject_shape_overlay_options.show_overlay || show_heading_arrows || inspect_masks,
-            subject_shape_needs_contours);
+            subject_shape_needs_contours, show_canonical_eye_geometry);
         auto presentation = crimson::gui::makeCanonicalOverlayPresentation(
             canonical_overlay_session.snapshot(current_frame_num), 0, current_frame_num,
             static_cast<int>(canonical_detection_expected_width),
@@ -3764,6 +3768,7 @@ int main(int argc, char **argv) {
           show_stimulus_debug_windows,
       };
       frame_debug_context.canonical_overlays = canonical_detection_route ? &inspect_overlays : nullptr;
+      frame_debug_context.show_eye_geometry = show_canonical_eye_geometry;
       const auto requested_frame_inspect_view =
           workspace_state.selections().frame_inspect_view;
       const crimson::app::FrameInspectTabState frame_inspect_tab_state{
@@ -3790,6 +3795,7 @@ int main(int argc, char **argv) {
       show_keypoint_markers = frame_debug_result.show_keypoint_markers;
       show_heading_arrows = frame_debug_result.show_heading_arrows;
       show_eye_masks = frame_debug_result.show_eye_masks;
+      show_canonical_eye_geometry = frame_debug_result.show_eye_geometry;
       show_subject_body_mask = frame_debug_result.show_subject_body_mask;
       show_eye_left_mask = frame_debug_result.show_eye_left_mask;
       show_eye_right_mask = frame_debug_result.show_eye_right_mask;
@@ -4478,7 +4484,7 @@ int main(int argc, char **argv) {
                     camera_subject_shape_needs_contours,
                 show_eye_masks || camera_subject_shape_needs_contours,
                 subject_shape_overlay_options.show_overlay || show_heading_arrows,
-                camera_subject_shape_needs_contours);
+                camera_subject_shape_needs_contours, show_canonical_eye_geometry);
             crimson::overlay::ReadOnlyOverlayControlState controls;
             controls.show_keypoints = show_keypoint_markers;
             controls.show_headings = show_heading_arrows;
@@ -4487,7 +4493,11 @@ int main(int argc, char **argv) {
             controls.show_eye_left_mask = show_eye_left_mask;
             controls.show_eye_right_mask = show_eye_right_mask;
             controls.show_swim_bladder_mask = show_swim_bladder_mask;
-            controls.show_eye_geometry = false;
+            controls.show_eye_geometry = show_canonical_eye_geometry;
+            controls.show_eye_direction_beams = show_eye_direction_beams;
+            controls.show_eye_gaze_rays = show_eye_gaze_rays;
+            controls.show_eye_angle_arcs = show_eye_angle_arcs;
+            controls.show_eye_angle_labels = show_eye_angle_labels;
             applyCameraViewCanonicalSubjectShapeControls(
                 subject_shape_overlay_options, &controls);
             canonical_presentation = crimson::gui::makeCanonicalOverlayPresentation(
@@ -4937,6 +4947,8 @@ int main(int argc, char **argv) {
                 canonical_presentation.masks.ready() ? &canonical_presentation.masks : nullptr;
             prepared_camera_context.context.subject_shape_scene =
                 canonical_presentation.shapes.ready() ? &canonical_presentation.shapes : nullptr;
+            prepared_camera_context.context.eye_geometry_scene =
+                canonical_presentation.eyes.ready() ? &canonical_presentation.eyes : nullptr;
             prepared_camera_context.context.mask_details = nullptr;
             prepared_camera_context.context.subject_shape_details = nullptr;
             prepared_camera_context.context.subject_mask_pick_enabled = false;
@@ -4971,6 +4983,16 @@ int main(int argc, char **argv) {
             canonical_shape_draw_count = camera_view_result.perf.subject_shape_overlay_item_count;
             canonical_expected_shape_draw_count = static_cast<int>(canonical_presentation.shapes.primitives.size());
             canonical_expected_mask_draw_count = static_cast<int>(canonical_presentation.masks.raster_masks.size());
+            canonical_expected_eye_label_count = static_cast<int>(canonical_presentation.eyes.text_annotations.size());
+            canonical_expected_eye_cone_count = 0;
+            canonical_expected_eye_overlap_count = 0;
+            for (const auto& primitive : canonical_presentation.eyes.primitives) {
+              if (primitive.type != crimson::overlay::PrimitiveType::Polygon) continue;
+              if (primitive.label.rfind("##eye_beam_overlap_", 0) == 0)
+                ++canonical_expected_eye_overlap_count;
+              else if (primitive.label.rfind("##eye_beam_", 0) == 0)
+                ++canonical_expected_eye_cone_count;
+            }
             canonical_expected_contour_draw_count =
                 static_cast<int>(canonical_presentation.masks.primitives.size());
             canonical_actual_contour_draw_count =
@@ -5027,6 +5049,23 @@ int main(int argc, char **argv) {
               writePlaybackTraceEvent("canonical_overlay_present",
                   {{"generation", snapshot.generation},
                    {"query_frame", zarr_bbox_query_frame},
+                   {"eye_enabled", show_canonical_eye_geometry},
+                   {"eye_state", crimson::gui::canonicalOverlayStateName(snapshot.eyes.state)},
+                   {"eye_frame", snapshot.eyes.frame ? snapshot.eyes.frame->camera_frame : -1},
+                   {"eye_error", snapshot.eyes.error},
+                   {"eye_expected_labels", canonical_expected_eye_label_count},
+                   {"eye_actual_labels", mask_perf.angle_labels_drawn},
+                   {"eye_expected_cones", canonical_expected_eye_cone_count},
+                   {"eye_actual_cones", mask_perf.visual_cones_drawn},
+                   {"eye_expected_overlaps", canonical_expected_eye_overlap_count},
+                   {"eye_actual_overlaps", mask_perf.visual_cone_overlaps_drawn},
+                   {"eye_axes_drawn", mask_perf.axes_drawn},
+                   {"eye_gaze_rays_drawn", mask_perf.gaze_rays_drawn},
+                   {"eye_maximum_resolve_ms", snapshot.eye_buffer_metrics.maximum_resolve_ms},
+                   {"eye_payload_read_calls", snapshot.eye_metrics.payload_read_calls},
+                   {"eye_logical_requested_bytes", snapshot.eye_metrics.logical_payload_bytes_read},
+                   {"eye_decoded_cache_bytes", snapshot.eye_metrics.retained_decoded_cache_bytes},
+                   {"eye_frame_cache_hits", snapshot.eye_metrics.cache_hits},
                    {"mask_frame", mask.frame ? mask.frame->camera_frame : -1},
                    {"mask_state", crimson::gui::canonicalOverlayStateName(mask.state)},
                    {"mask_outcome", outcome}, {"mask_error", mask.error},
@@ -6460,6 +6499,15 @@ int main(int argc, char **argv) {
               frame_mask_overlay_perf.component_fill_count == canonical_expected_mask_draw_count;
           state_ready = state_ready &&
               canonical_actual_contour_draw_count == canonical_expected_contour_draw_count;
+          if (show_canonical_eye_geometry) {
+            state_ready = state_ready &&
+                (overlays.eyes.state == ready || overlays.eyes.state == empty) &&
+                overlays.eyes.frame &&
+                overlays.eyes.frame->camera_frame == ui_reference.target_frame &&
+                frame_mask_overlay_perf.angle_labels_drawn == canonical_expected_eye_label_count &&
+                frame_mask_overlay_perf.visual_cones_drawn == canonical_expected_eye_cone_count &&
+                frame_mask_overlay_perf.visual_cone_overlaps_drawn == canonical_expected_eye_overlap_count;
+          }
           break;
         }
         state_ready =
@@ -6889,6 +6937,17 @@ int main(int argc, char **argv) {
             {"masks", product(overlays.masks)},
             {"mask_contours", product(overlays.mask_contours)},
             {"shapes", product(overlays.shapes)},
+            {"eyes", product(overlays.eyes)},
+            {"eye_enabled", show_canonical_eye_geometry},
+            {"eye_expected_labels", canonical_expected_eye_label_count},
+            {"eye_actual_labels", frame_mask_overlay_perf.angle_labels_drawn},
+            {"eye_expected_cones", canonical_expected_eye_cone_count},
+            {"eye_actual_cones", frame_mask_overlay_perf.visual_cones_drawn},
+            {"eye_expected_overlaps", canonical_expected_eye_overlap_count},
+            {"eye_actual_overlaps", frame_mask_overlay_perf.visual_cone_overlaps_drawn},
+            {"eye_payload_read_calls", overlays.eye_metrics.payload_read_calls},
+            {"eye_logical_requested_bytes", overlays.eye_metrics.logical_payload_bytes_read},
+            {"eye_decoded_cache_bytes", overlays.eye_metrics.retained_decoded_cache_bytes},
             {"keypoint_primitives", canonical_keypoint_draw_count},
             {"heading_primitives", canonical_heading_draw_count},
             {"shape_primitives", canonical_shape_draw_count},

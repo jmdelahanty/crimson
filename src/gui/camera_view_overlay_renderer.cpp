@@ -1,6 +1,7 @@
 #include "gui/camera_view_overlay_renderer.h"
 
 #include "gui/camera_view_keypoint_scene_adapter.h"
+#include "gui/camera_view_vector_scene_draw.h"
 
 #include "imgui.h"
 #include "implot.h"
@@ -326,6 +327,13 @@ void drawCameraViewReadOnlyOverlayScene(
     } else {
         drawCameraViewReadOnlyRasterMasks(scene, image_height_px);
     }
+    const auto polygon_counts = crimson::gui::drawCameraViewScenePolygons(
+        scene, image_height_px);
+    if (mask_perf != nullptr) {
+        mask_perf->visual_cones_drawn += polygon_counts.visual_cones;
+        mask_perf->visual_cone_overlaps_drawn +=
+            polygon_counts.visual_cone_overlaps;
+    }
     for (const auto& primitive : scene.primitives) {
         if (primitive.type == crimson::overlay::PrimitiveType::Polyline) {
             if (primitive.points.size() < 2) {
@@ -343,13 +351,16 @@ void drawCameraViewReadOnlyOverlayScene(
                 toImVec4(primitive.stroke),
                 static_cast<float>(primitive.stroke_width_px));
             const bool subject_mask_contour =
-                mask_perf != nullptr &&
-                primitive.layer ==
-                    crimson::overlay::CameraOverlayLayer::SubjectMasks;
+                primitive.label.rfind("##mask_contour_", 0) == 0;
+            const bool eye_axis =
+                primitive.label.rfind("##eye_major_", 0) == 0 ||
+                primitive.label.rfind("##eye_minor_", 0) == 0;
+            const bool eye_gaze =
+                primitive.label.rfind("##eye_gaze_", 0) == 0;
             const auto contour_draw_start = std::chrono::steady_clock::now();
             ImPlot::PlotLine(primitive.label.c_str(), x.data(), y.data(),
                              static_cast<int>(x.size()));
-            if (subject_mask_contour) {
+            if (mask_perf != nullptr && subject_mask_contour) {
                 const double elapsed_ms =
                     std::chrono::duration<double, std::milli>(
                         std::chrono::steady_clock::now() - contour_draw_start)
@@ -359,6 +370,12 @@ void drawCameraViewReadOnlyOverlayScene(
                     static_cast<int>(primitive.points.size());
                 mask_perf->contour_draw_ms += elapsed_ms;
                 mask_perf->total_draw_ms += elapsed_ms;
+            }
+            if (mask_perf != nullptr && eye_axis) {
+                ++mask_perf->axes_drawn;
+            }
+            if (mask_perf != nullptr && eye_gaze) {
+                ++mask_perf->gaze_rays_drawn;
             }
             continue;
         }
@@ -409,6 +426,11 @@ void drawCameraViewReadOnlyOverlayScene(
         draw_list->AddTriangleFilled(
             end, left, right,
             ImGui::GetColorU32(toImVec4(primitive.fill)));
+    }
+    const auto text_counts = crimson::gui::drawCameraViewSceneText(
+        scene, image_height_px);
+    if (mask_perf != nullptr) {
+        mask_perf->angle_labels_drawn += text_counts.angle_labels;
     }
 }
 

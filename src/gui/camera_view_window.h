@@ -135,6 +135,7 @@ struct CameraViewWindowContext {
     CameraViewTransportControlsContext transport_controls;
     bool capture_texture_draw_trace = false;
     const crimson::overlay::ReadOnlyOverlayScene* subject_shape_scene = nullptr;
+    const crimson::overlay::ReadOnlyOverlayScene* eye_geometry_scene = nullptr;
 };
 
 struct CameraViewSubjectMaskPick {

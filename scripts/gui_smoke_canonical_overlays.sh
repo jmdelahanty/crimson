@@ -10,6 +10,11 @@ case "$mode" in
   *) echo "Invalid canonical overlay mode: $mode" >&2; exit 2 ;;
 esac
 require_shape_debug="${CRIMSON_CANONICAL_OVERLAY_REQUIRE_SHAPE_DEBUG:-0}"
+require_eyes="${CRIMSON_CANONICAL_OVERLAY_REQUIRE_EYES:-0}"
+[[ "$require_eyes" == 0 || "$require_eyes" == 1 ]] ||
+  { echo "CRIMSON_CANONICAL_OVERLAY_REQUIRE_EYES must be 0 or 1" >&2; exit 2; }
+eye_args=()
+if [[ "$require_eyes" == 1 ]]; then eye_args+=(--show-eye-geometry); fi
 [[ "$require_shape_debug" == 0 || "$require_shape_debug" == 1 ]] ||
   { echo "CRIMSON_CANONICAL_OVERLAY_REQUIRE_SHAPE_DEBUG must be 0 or 1" >&2; exit 2; }
 [[ -d "$archive" && "$frame" =~ ^[0-9]+$ ]] || { echo "Invalid archive/frame" >&2; exit 2; }
@@ -24,7 +29,7 @@ cd "$case_dir"
 timeout 90 env DISPLAY="$display" XAUTHORITY="$xauthority" \
   CRIMSON_CANONICAL_OVERLAY_MODE="$mode" \
   XDG_CONFIG_HOME="$case_dir/config" XDG_CACHE_HOME="$case_dir/cache" \
-  "$binary" --zarr "$archive" \
+  "$binary" --zarr "$archive" "${eye_args[@]}" \
   --ui-reference-state overlays --ui-reference-frame "$frame" \
   --ui-reference-ready-file "$case_dir/ready.json" --ui-reference-timeout 75 \
   --ui-reference-size 1600x1000 --swap-interval 0 --frame-cap-fps 60 \
@@ -38,7 +43,8 @@ trap cleanup EXIT
 while kill -0 "$case_pid" 2>/dev/null; do
   if [[ -f "$case_dir/ready.json" ]]; then
     jq -e --argjson frame "$frame" --arg mode "$mode" \
-      --argjson require_shape_debug "$require_shape_debug" '
+      --argjson require_shape_debug "$require_shape_debug" \
+      --argjson require_eyes "$require_eyes" '
       .state == "overlays" and .target_frame == $frame and
       .presented_frame == $frame and .current_frame == $frame and
       .bbox_query_frame == $frame and .stable_frames >= 60 and
@@ -76,6 +82,19 @@ while kill -0 "$case_pid" 2>/dev/null; do
          (.canonical_overlays.mask_expected_contour_labels | keys) == ["subject_body"]
        else .canonical_overlays.mask_actual_contours == 0 and
             .canonical_overlays.mask_contour_payload_reads == 0 end) and
+      (if $require_eyes == 1 then
+         .canonical_overlays.eye_enabled and
+         .canonical_overlays.eyes.state == "ready" and
+         .canonical_overlays.eyes.frame == $frame and
+         .canonical_overlays.eyes.error == "" and
+         (.canonical_overlays.eyes.instance_keys | sort) ==
+           (.canonical_overlays.keypoints.instance_keys | sort) and
+         .canonical_overlays.eye_expected_labels > 0 and
+         .canonical_overlays.eye_actual_labels == .canonical_overlays.eye_expected_labels and
+         .canonical_overlays.eye_expected_cones > 0 and
+         .canonical_overlays.eye_actual_cones == .canonical_overlays.eye_expected_cones and
+         .canonical_overlays.eye_actual_overlaps == .canonical_overlays.eye_expected_overlaps
+       else .canonical_overlays.eye_payload_read_calls == 0 end) and
       (if $require_shape_debug == 1 then
          .canonical_overlays.shape_expected_labels.bspline_debug > 0 and
          .canonical_overlays.shape_expected_labels.control_points > 0 and

@@ -183,6 +183,10 @@ NvidiaLaunchParseResult parseNvidiaLaunchOptions(int argc,
       options.show_eye_masks = true;
       continue;
     }
+    if (arg == "--show-eye-geometry" || arg == "--no-eye-geometry") {
+      options.show_eye_geometry = arg == "--show-eye-geometry";
+      continue;
+    }
     if (arg == "--tail-kinematics-run") {
       const char *value =
           requireValue("Missing value for --tail-kinematics-run");

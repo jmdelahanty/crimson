@@ -2,6 +2,7 @@
 
 #include "zarr/subject_mask_overlay_scene_adapter.h"
 #include "zarr/subject_shape_overlay_scene_adapter.h"
+#include "zarr/eye_geometry_overlay_scene_adapter.h"
 
 #include <cmath>
 #include <iterator>
@@ -46,6 +47,9 @@ CanonicalOverlayPresentation makeCanonicalOverlayPresentation(
   checkFrame(snapshot.masks, presented_frame);
   checkFrame(snapshot.mask_contours, presented_frame);
   checkFrame(snapshot.shapes, presented_frame);
+  checkFrame(snapshot.eyes, presented_frame);
+  if (!snapshot.selection && snapshot.eyes.frame)
+    fail(snapshot.eyes, "Canonical eye source selection is unavailable");
   if (snapshot.selection) {
     const auto check_source = [](auto& product, const auto& binding) {
       if (product.frame && (!binding.valid || product.descriptor.run_name != binding.run_id))
@@ -55,6 +59,15 @@ CanonicalOverlayPresentation makeCanonicalOverlayPresentation(
     check_source(snapshot.masks, snapshot.selection->mask);
     check_source(snapshot.mask_contours, snapshot.selection->mask);
     check_source(snapshot.shapes, snapshot.selection->shape);
+    if (snapshot.eyes.frame) {
+      const auto& binding = snapshot.selection->eye;
+      const auto& descriptor = snapshot.eyes.descriptor;
+      if (!binding.valid || descriptor.run_name != binding.run_id ||
+          descriptor.source_subject_shape_run != snapshot.selection->shape.run_id ||
+          descriptor.publication_identity_digest != binding.identity_digest ||
+          !descriptor.validated_instance_keys)
+        fail(snapshot.eyes, "Eye source differs from the immutable bound selection");
+    }
   }
   std::unordered_set<uint64_t> keys;
   bool keys_available = resolved(snapshot.keypoints.state) && snapshot.keypoints.frame;
@@ -83,6 +96,9 @@ CanonicalOverlayPresentation makeCanonicalOverlayPresentation(
   if (keys_available && resolved(snapshot.shapes.state) && snapshot.shapes.frame &&
       !sameKeys(keys, snapshot.shapes))
     fail(snapshot.shapes, "Bound shape/keypoint observation keys disagree for this frame");
+  if (keys_available && resolved(snapshot.eyes.state) && snapshot.eyes.frame &&
+      !sameKeys(keys, snapshot.eyes))
+    fail(snapshot.eyes, "Bound eye/keypoint observation keys disagree for this frame");
   if (resolved(snapshot.shapes.state) && snapshot.shapes.frame) {
     std::unordered_set<uint64_t> shape_keys;
     bool invalid_identity = false;
@@ -101,6 +117,24 @@ CanonicalOverlayPresentation makeCanonicalOverlayPresentation(
     for (const auto& mask : snapshot.masks.frame->detections) mask_keys.insert(mask.instance_key);
     if (mask_keys.size() != snapshot.masks.frame->detections.size() || !sameKeys(mask_keys, snapshot.shapes))
       fail(snapshot.shapes, "Bound shape/mask observation keys disagree for this frame");
+  }
+  if (resolved(snapshot.eyes.state) && snapshot.eyes.frame) {
+    std::unordered_set<uint64_t> eye_keys;
+    bool invalid_identity = false;
+    for (const auto& eye : snapshot.eyes.frame->detections) {
+      if (!eye.instance_key_valid || !eye_keys.insert(eye.instance_key).second) {
+        invalid_identity = true;
+        break;
+      }
+    }
+    if (invalid_identity)
+      fail(snapshot.eyes, "Canonical eye identity is missing or duplicated");
+    else if (!keys_available && resolved(snapshot.shapes.state) &&
+             snapshot.shapes.frame && !sameKeys(eye_keys, snapshot.shapes))
+      fail(snapshot.eyes, "Bound eye/shape observation keys disagree for this frame");
+    else if (!keys_available && resolved(snapshot.masks.state) &&
+             snapshot.masks.frame && !sameKeys(eye_keys, snapshot.masks))
+      fail(snapshot.eyes, "Bound eye/mask observation keys disagree for this frame");
   }
 
   if (resolved(snapshot.keypoints.state) && snapshot.keypoints.frame) {
@@ -211,6 +245,13 @@ CanonicalOverlayPresentation makeCanonicalOverlayPresentation(
         view, source_width, source_height);
     overlay::applyReadOnlyOverlayControls(controls, &input);
     result.shapes = overlay::buildReadOnlyOverlayScene(input);
+  }
+  if (resolved(snapshot.eyes.state) && snapshot.eyes.frame) {
+    auto input = zarr::makeEyeGeometryOverlaySceneInput(
+        snapshot.eyes.descriptor, *snapshot.eyes.frame, view, presented_frame,
+        view, source_width, source_height);
+    overlay::applyReadOnlyOverlayControls(controls, &input);
+    result.eyes = overlay::buildReadOnlyOverlayScene(input);
   }
   result.snapshot = std::move(snapshot);
   return result;

@@ -118,6 +118,7 @@ struct FrameDebugWindowContext {
         chaser_distance_polar_inset_options;
     bool show_stimulus_debug_windows = false;
     const crimson::gui::CanonicalOverlaySnapshot* canonical_overlays = nullptr;
+    bool show_eye_geometry = false;
 };
 
 struct FrameDebugWindowResult {
@@ -166,6 +167,7 @@ struct FrameDebugWindowResult {
     bool request_next_eye_angle_qc_frame = false;
     bool request_seek_eye_angle_row = false;
     size_t requested_eye_angle_row = 0;
+    bool show_eye_geometry = false;
 };
 
 FrameDebugWindowResult drawFrameDebugWindow(const FrameDebugWindowContext& context,
