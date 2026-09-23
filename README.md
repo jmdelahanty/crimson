@@ -63,6 +63,16 @@ For a first Windows bring-up where 3D triangulation is not needed, prefer
 `windows-trt10-cuda12.4-no-sfm`. That preset disables the OpenCV SFM-based
 triangulation path and leaves the rest of the pinned stack unchanged.
 
+### Linux Ubuntu 22 Builder
+
+For Linux source builds without installing the CUDA/OpenCV/TensorRT development
+stack on the host, use the
+[Ubuntu 22 Apptainer builder guide](docs/crimson_linux_distribution_strategy.md#ubuntu-22-builder-approved-image-and-local-rebuilds).
+It distinguishes the approved, checksum-locked image from locally rebuilt
+development images, documents `--builder-lock`, and explains early TensorRT
+header validation. The repository does not automatically download the approved
+SIF; obtain it from the maintainer or follow the local-development workflow.
+
 ### macOS Native Application
 
 `macos-arm64-release` builds the native Apple Silicon application with

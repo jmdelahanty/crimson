@@ -1619,6 +1619,14 @@ if(UNIX AND NOT APPLE)
             LABELS "headless;linux;packaging"
             TIMEOUT 30
         )
+        add_test(NAME linux_builder_validation_tests
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/linux_builder_validation_tests.py)
+        set_tests_properties(linux_builder_validation_tests PROPERTIES
+            ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
+            LABELS "headless;linux;packaging"
+            TIMEOUT 30
+        )
     endif()
 endif()
 

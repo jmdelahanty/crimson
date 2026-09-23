@@ -23,7 +23,8 @@ into the app drop.
 
 Options:
   --builder PATH             Builder SIF path.
-  --builder-lock PATH        Repository lock describing the approved SIF.
+  --builder-lock PATH        Explicit SIF lock; defaults to the approved repository
+                             lock. Local candidates need their own lock; see docs.
   --build-dir PATH           Out-of-source CMake build directory.
   --install-prefix PATH      Staged app-drop directory.
   --cuda-architectures LIST  CMake CUDA architectures. Default: 80;86.
@@ -100,9 +101,10 @@ locked_sha256="$(sed -n 's/.*"builder_sif_sha256": "\([0-9a-f]\{64\}\)".*/\1/p' 
 [ -n "$locked_sha256" ] || { echo "Builder SHA-256 is missing from: $builder_lock" >&2; exit 1; }
 actual_sha256="$(sha256sum "$builder" | awk '{print $1}')"
 if [ "$actual_sha256" != "$locked_sha256" ]; then
-    echo "Builder SIF does not match the approved repository lock:" >&2
+    echo "Builder SIF does not match the selected lock: $builder_lock" >&2
     echo "  expected: $locked_sha256" >&2
     echo "  actual:   $actual_sha256" >&2
+    echo "A rebuilt image need not match the approved artifact; see docs/crimson_linux_distribution_strategy.md." >&2
     exit 1
 fi
 
@@ -112,6 +114,13 @@ apptainer exec --cleanenv "$builder" /bin/bash -lc '
     test -x /opt/crimson/cmake-3.30.5-linux-x86_64/bin/cmake
     test -r /opt/crimson/opencv-4.10.0-jammy/lib/cmake/opencv4/OpenCVConfig.cmake
     test -r /opt/crimson/tensorrt-10.0.1.6/lib/libnvinfer.so
+    for crimson_trt_header in NvInfer.h NvInferVersion.h; do
+        crimson_trt_header_path="/opt/crimson/tensorrt-10.0.1.6/include/$crimson_trt_header"
+        if [ ! -f "$crimson_trt_header_path" ] || [ ! -r "$crimson_trt_header_path" ]; then
+            echo "TensorRT development header missing or unreadable: $crimson_trt_header_path" >&2
+            exit 1
+        fi
+    done
     test -r /opt/crimson/ffmpeg-jammy/lib/libavcodec.so
 '
 if [ "$verify_builder_only" -eq 1 ]; then

@@ -811,7 +811,7 @@ Current status:
 8. [todo] Run GUI smoke from the staged or published app drop, not only from
    the build tree.
 
-## Reproducible Ubuntu 22 Builder
+## Ubuntu 22 Builder: Approved Image and Local Rebuilds
 
 Linux releases use Ubuntu 22.04/glibc 2.35 as the compatibility baseline even
 when the build host runs a newer distribution. The builder definition is:
@@ -820,33 +820,120 @@ when the build host runs a newer distribution. The builder definition is:
 packaging/linux/ubuntu22-cuda12.4-trt10/CrimsonLinuxBuilder.def
 ```
 
-It pins the NGC TensorRT 24.05 base, CUDA 12.4, TensorRT 10.0.1.6, CMake
-3.30.5 (including its archive SHA-256), and exact OpenCV/OpenCV-contrib 4.10
-commits. OpenCV is built without fast math for `sm_80` and `sm_86` and includes
-the CUDA, DNN, video, and SFM modules required by Crimson.
+The recipe names the NGC TensorRT 24.05 base and the CUDA 12.4 / TensorRT
+10.0.1.6 stack, pins CMake 3.30.5 by archive SHA-256, and pins exact
+OpenCV/OpenCV-contrib 4.10 commits. OpenCV is built without fast math for
+`sm_80` and `sm_86` and includes the CUDA, DNN, video, and SFM modules required
+by Crimson.
 
-Build the SIF once on a host with Apptainer fakeroot support:
+The repository lock at
+`packaging/linux/ubuntu22-cuda12.4-trt10/CrimsonLinuxBuilder.lock.json`
+identifies **one approved SIF artifact**, not the definition file. Rebuilding
+or resealing an image is not promised to reproduce identical bytes. The recipe
+also uses a base-image tag and distribution packages rather than an entirely
+content-addressed dependency closure. A new SIF can have a different hash while
+claiming the same tool versions; those claims still need validation.
+
+### Reuse the approved image
+
+Obtain the approved SIF and its checksum from the maintainer through the
+project's agreed file-sharing location. There is no automatic approved-image
+download in the repository. A packaged Crimson application is not a builder
+image. Keep the SIF outside Git and do not edit the checked-in lock just to make
+an unrelated image pass.
+
+The release wrapper verifies the sibling `<builder>.sha256` when present and
+always verifies the SIF against the selected lock. A missing sidecar produces
+a warning; it does not skip the mandatory lock comparison. Verify before
+configuring or compiling:
 
 ```bash
-tools/build_linux_apptainer_builder.sh
+crimson_builder="$HOME/crimson-builders/crimson-linux-ubuntu22-cuda12.4-trt10.sif"
+tools/build_linux_release_in_apptainer.sh \
+  --builder "$crimson_builder" --verify-builder-only
+tools/build_linux_release_in_apptainer.sh \
+  --builder "$crimson_builder" --jobs 8
 ```
 
-Use `--sudo` on an approved dedicated builder when fakeroot is unavailable. A
-validated user-owned sandbox can instead be sealed without privilege:
+Use a basename-relative checksum sidecar when sharing an image. The current
+image-building helper may write the original absolute path in that file; after
+copying, a checksum error mentioning the old path is not proof of corruption.
+With `jq` installed, the following creates a portable sidecar from the trusted
+repository lock (not from an unverified local image) and checks the copied bytes:
 
 ```bash
-tools/build_linux_apptainer_builder.sh \
-  --from-sandbox /path/to/validated-sandbox
+crimson_expected=$(jq -er '.builder_sif_sha256' \
+  packaging/linux/ubuntu22-cuda12.4-trt10/CrimsonLinuxBuilder.lock.json)
+printf '%s  %s\n' "$crimson_expected" "$(basename -- "$crimson_builder")" \
+  > "${crimson_builder}.sha256"
+(cd -- "$(dirname -- "$crimson_builder")" && \
+  sha256sum -c "$(basename -- "$crimson_builder").sha256")
 ```
 
-The helper writes `<builder>.sha256`. Normal builds reuse that sealed image and
-verify the sidecar before compiling:
+This receipt is only as trustworthy as the repository lock used to create it.
+Keep the received checksum separately if it is needed for provenance.
+
+### Build a local development image
+
+Use a new output path so the approved image remains available. Building the
+definition needs network access, substantial disk space and compilation time,
+and Apptainer fakeroot support:
 
 ```bash
-CRIMSON_LINUX_BUILDER_SIF=$HOME/crimson-builders/\
-crimson-linux-ubuntu22-cuda12.4-trt10.sif \
-tools/build_linux_release_in_apptainer.sh
+crimson_candidate="$HOME/crimson-builders/crimson-linux-ubuntu22-local.sif"
+tools/build_linux_apptainer_builder.sh --output "$crimson_candidate"
 ```
+
+Use `--sudo` only on an approved dedicated builder when fakeroot is unavailable.
+A validated, user-owned sandbox can instead be sealed with
+`--from-sandbox /path/to/validated-sandbox --output "$crimson_candidate"`.
+Neither route automatically promotes its result to the repository-approved SIF.
+
+For an intentional local development build, record a separate lock outside Git.
+This example requires `jq` and records only the candidate's byte identity, not
+an inherited approval timestamp or unmeasured dependency versions:
+
+```bash
+crimson_candidate_sha=$(sha256sum "$crimson_candidate" | awk '{print $1}')
+jq -n --arg sha "$crimson_candidate_sha" \
+  '{schema_id: "crimson_linux_builder_lock_v1",
+    builder_id: "local-development-candidate",
+    builder_sif_sha256: $sha,
+    qualification_status: "unqualified_local_build"}' \
+  > "${crimson_candidate}.lock.json"
+
+tools/build_linux_release_in_apptainer.sh \
+  --builder "$crimson_candidate" \
+  --builder-lock "${crimson_candidate}.lock.json" --verify-builder-only
+tools/build_linux_release_in_apptainer.sh \
+  --builder "$crimson_candidate" \
+  --builder-lock "${crimson_candidate}.lock.json" --jobs 8
+```
+
+`--builder-lock` deliberately selects a different expected artifact; it does not
+disable hashing or prove compatibility. The wrapper currently consumes the
+`builder_sif_sha256` field, not the informational qualification fields. Never
+replace the tracked approved lock with a locally calculated hash merely to
+bypass a mismatch. Keep the local lock, image checksum, source revision, and
+build/test evidence with the resulting app; its application Git revision alone
+does not identify the builder used. Promoting a candidate requires maintainer
+review and explicit updates to the approved artifact and validation record.
+
+### Early validation and its limits
+
+The definition's `%test`, the build/sealing helper, and the release wrapper all
+require the TensorRT runtime library **and readable regular files** for
+`include/NvInfer.h` and `include/NvInferVersion.h`. A missing header, directory
+in place of a header, or broken include symlink fails with the affected path
+before Crimson's CMake configuration. These preflight checks also apply to an
+existing approved SIF; adding them to the scripts does not require changing its
+bytes or its lock.
+
+Header presence is not an exact-version or successful-compilation guarantee.
+CMake still reads `NvInferVersion.h` and enforces the pinned CUDA/OpenCV/TensorRT
+versions. `--verify-builder-only` stops before host-driver discovery, CMake,
+compilation, and GUI validation. The fixture tests for these preflight and hash
+gates run without a GPU or an Apptainer installation.
 
 The release wrapper never starts the GUI inside the builder. It uses the image
 only for compilation and staging, binds the build host's NVIDIA driver

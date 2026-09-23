@@ -12,8 +12,9 @@ usage() {
     cat <<'EOF'
 Usage: build_linux_apptainer_builder.sh [options]
 
-Builds or seals Crimson's pinned Ubuntu 22 Linux builder and writes a sibling
-SHA-256 file. Normal release builds reuse the resulting SIF.
+Builds or seals a Crimson Ubuntu 22 Linux builder and writes a sibling SHA-256
+file. A fresh image is not guaranteed to match the approved repository lock.
+See docs/crimson_linux_distribution_strategy.md for local-image validation.
 
 Options:
   --definition PATH  Apptainer definition to build. Defaults to the repository
@@ -89,6 +90,13 @@ apptainer exec --cleanenv "$temporary_output" /bin/bash -lc '
     test -x /opt/crimson/cmake-3.30.5-linux-x86_64/bin/cmake
     test -r /opt/crimson/opencv-4.10.0-jammy/lib/cmake/opencv4/OpenCVConfig.cmake
     test -r /opt/crimson/tensorrt-10.0.1.6/lib/libnvinfer.so
+    for crimson_trt_header in NvInfer.h NvInferVersion.h; do
+        crimson_trt_header_path="/opt/crimson/tensorrt-10.0.1.6/include/$crimson_trt_header"
+        if [ ! -f "$crimson_trt_header_path" ] || [ ! -r "$crimson_trt_header_path" ]; then
+            echo "TensorRT development header missing or unreadable: $crimson_trt_header_path" >&2
+            exit 1
+        fi
+    done
     test -r /opt/crimson/ffmpeg-jammy/lib/libavcodec.so
 '
 mv -- "$temporary_output" "$output"
