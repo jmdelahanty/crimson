@@ -2,6 +2,7 @@
 
 #include "zarr/archive_context_internal.h"
 #include "zarr/canonical_json.h"
+#include "zarr/shared_mask_frame_index.h"
 
 #include <tensorstore/index_space/dim_expression.h>
 #include <tensorstore/open.h>
@@ -11,6 +12,7 @@
 #include <cmath>
 #include <future>
 #include <limits>
+#include <optional>
 #include <string_view>
 #include <unordered_set>
 #include <utility>
@@ -502,6 +504,7 @@ class BoundSubjectShapeOverlayRepository final
 public:
   BoundSubjectShapeOverlayRepository(
       SubjectShapeOverlayDescriptor descriptor, std::vector<int64_t> offsets,
+      std::shared_ptr<const SharedMaskFrameIndex> shared_index,
       size_t max_observations_per_frame, uint64_t max_decoded_frame_bytes,
       uint64_t decoded_bytes_per_row, size_t roi_width, size_t roi_height,
       ts::TensorStore<int64_t, 1> shape_frames,
@@ -512,6 +515,7 @@ public:
       ts::TensorStore<int64_t, 1> mask_crop_rows,
       ts::TensorStore<float, 2> mask_crop_xywh, GeometrySources geometry)
       : descriptor_(std::move(descriptor)), offsets_(std::move(offsets)),
+        shared_index_(std::move(shared_index)),
         max_observations_per_frame_(max_observations_per_frame),
         max_decoded_frame_bytes_(max_decoded_frame_bytes),
         decoded_bytes_per_row_(decoded_bytes_per_row),
@@ -547,8 +551,9 @@ public:
       return result;
     }
     const size_t frame = static_cast<size_t>(camera_frame);
-    const size_t first = static_cast<size_t>(offsets_[frame]);
-    const size_t last = static_cast<size_t>(offsets_[frame + 1]);
+    const auto& offsets = shared_index_ ? shared_index_->offsets() : offsets_;
+    const size_t first = static_cast<size_t>(offsets[frame]);
+    const size_t last = static_cast<size_t>(offsets[frame + 1]);
     const size_t rows = last - first;
     if (rows == 0) {
       result.status = SubjectShapeOverlayStatus::Missing;
@@ -727,6 +732,7 @@ public:
 private:
   SubjectShapeOverlayDescriptor descriptor_;
   std::vector<int64_t> offsets_;
+  std::shared_ptr<const SharedMaskFrameIndex> shared_index_;
   size_t max_observations_per_frame_ = 0;
   uint64_t max_decoded_frame_bytes_ = 0;
   uint64_t decoded_bytes_per_row_ = 0;
@@ -770,6 +776,14 @@ OpenBoundSubjectShapeOverlayRepository(
     return nullptr;
   }
   const auto &selection = request.selection;
+  const auto shared_index = request.shared_mask_frame_index;
+  if (shared_index &&
+      (!shared_index->matches(request.archive, selection) ||
+       !shared_index->admits(request.max_observations_per_frame))) {
+    assignError(error_message,
+                "Shared mask frame index binding or shape admission disagrees");
+    return nullptr;
+  }
   if (!selection.shape.valid || !selection.mask.valid ||
       !validRunName(selection.shape.run_id) ||
       !validRunName(selection.mask.run_id) ||
@@ -965,8 +979,11 @@ OpenBoundSubjectShapeOverlayRepository(
       archive, mask_base + "/source_crop_row_ids", &metrics, error_message);
   auto mask_crop_xywh = openExact<float, 2>(
       archive, mask_base + "/source_crop_xywh", &metrics, error_message);
-  auto offsets = openExact<int64_t, 1>(
-      archive, mask_base + "/frame_row_offsets", &metrics, error_message);
+  std::optional<ts::TensorStore<int64_t, 1>> offsets;
+  if (!shared_index) {
+    offsets = openExact<int64_t, 1>(
+        archive, mask_base + "/frame_row_offsets", &metrics, error_message);
+  }
 
   const std::string body = shape_base + "/body_frame";
   const std::string subject = shape_base + "/components/subject_body";
@@ -1082,7 +1099,8 @@ OpenBoundSubjectShapeOverlayRepository(
       archive, subject + "/tail_normal_xy", &metrics, error_message);
 
   if (!shape_frames || !shape_keys || !shape_crop_rows || !mask_frames ||
-      !mask_keys || !mask_crop_rows || !mask_crop_xywh || !offsets ||
+      !mask_keys || !mask_crop_rows || !mask_crop_xywh ||
+      (!shared_index && !offsets) ||
       !body_valid || !axis_valid || !heading || !body_origin || !forward ||
       !left || !snout_valid || !snout || !tail_base_valid || !tail_base ||
       !tail_tip || !caudal_valid || !caudal || !centerline_valid ||
@@ -1106,7 +1124,8 @@ OpenBoundSubjectShapeOverlayRepository(
       !vectorShape(*shape_crop_rows) || !vectorShape(*mask_frames) ||
       !vectorShape(*mask_keys) || !vectorShape(*mask_crop_rows) ||
       !exactShape(*mask_crop_xywh, {rows, 4}) ||
-      !exactShape(*offsets, {selection.frame_count + 1}) ||
+      (!shared_index &&
+       !exactShape(*offsets, {selection.frame_count + 1})) ||
       !vectorShape(*body_valid) || !vectorShape(*axis_valid) ||
       !vectorShape(*heading) || !pointShape(*body_origin) ||
       !pointShape(*forward) || !pointShape(*left) ||
@@ -1124,24 +1143,29 @@ OpenBoundSubjectShapeOverlayRepository(
   }
 
   std::vector<int64_t> retained_offsets;
-  if (!readRows(*offsets, 0, selection.frame_count + 1, 1,
+  if (!shared_index &&
+      !readRows(*offsets, 0, selection.frame_count + 1, 1,
                 &retained_offsets, error_message)) {
     return nullptr;
   }
-  metrics.offset_read_calls = 1;
+  const auto& effective_offsets =
+      shared_index ? shared_index->offsets() : retained_offsets;
+  metrics.offset_read_calls = shared_index ? 0 : 1;
   metrics.retained_offset_bytes =
       retained_offsets.capacity() * sizeof(int64_t);
+  metrics.borrowed_offset_bytes =
+      shared_index ? shared_index->retainedBytes() : 0;
   size_t maximum_observations = 0;
-  if (retained_offsets.size() != selection.frame_count + 1 ||
-      retained_offsets.front() != 0 ||
-      retained_offsets.back() != static_cast<int64_t>(rows) ||
-      !std::is_sorted(retained_offsets.begin(), retained_offsets.end()) ||
-      retained_offsets.back() < 0) {
+  if (effective_offsets.size() != selection.frame_count + 1 ||
+      effective_offsets.front() != 0 ||
+      effective_offsets.back() != static_cast<int64_t>(rows) ||
+      !std::is_sorted(effective_offsets.begin(), effective_offsets.end()) ||
+      effective_offsets.back() < 0) {
     assignError(error_message, "Bound mask frame offsets are invalid");
     return nullptr;
   }
   for (size_t frame = 0; frame < selection.frame_count; ++frame) {
-    const auto count = retained_offsets[frame + 1] - retained_offsets[frame];
+    const auto count = effective_offsets[frame + 1] - effective_offsets[frame];
     if (count < 0 ||
         static_cast<uint64_t>(count) > request.max_observations_per_frame) {
       assignError(error_message,
@@ -1230,6 +1254,7 @@ OpenBoundSubjectShapeOverlayRepository(
   }
   return std::make_unique<BoundSubjectShapeOverlayRepository>(
       std::move(descriptor), std::move(retained_offsets),
+      shared_index,
       request.max_observations_per_frame, request.max_decoded_frame_bytes,
       decoded_bytes_per_row, roi_width, roi_height, std::move(*shape_frames),
       std::move(*shape_keys), std::move(*shape_crop_rows),

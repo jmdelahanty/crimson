@@ -41,6 +41,7 @@ struct BoundEyeGeometryOverlayOpenRequest;
 struct BoundEyeGeometryOverlayOpenMetrics;
 struct TensorStoreChaserDistancePolarOptions;
 class TensorStoreChaserDistancePolarRepository;
+class SharedMaskFrameIndex;
 
 class ArchiveContext {
 public:
@@ -92,6 +93,11 @@ private:
   SelectCanonicalOverlaySources(
       const std::shared_ptr<ArchiveContext> &archive,
       const CanonicalOverlaySelectionRequest &request,
+      std::string *error_message);
+  friend std::shared_ptr<const SharedMaskFrameIndex>
+  OpenSharedMaskFrameIndex(
+      const std::shared_ptr<ArchiveContext> &archive,
+      const CanonicalOverlaySelection &selection,
       std::string *error_message);
   friend std::unique_ptr<class BoundKeypointOverlayRepository>
   OpenBoundKeypointOverlayRepository(

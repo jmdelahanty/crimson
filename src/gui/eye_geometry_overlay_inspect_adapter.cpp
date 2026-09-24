@@ -125,9 +125,11 @@ EyeAngleInspectPresentation makeEyeGeometryOverlayInspectPresentation(
     observation.frame_valid = detection.frame_valid;
     observation.frame_valid_known = true;
     observation.left_valid = detection.eyes[0].valid;
-    observation.left_valid_known = true;
+    observation.left_valid_known = zarr::EyeGeometryFieldsCover(
+        frame->loaded_fields, zarr::EyeGeometryFields::LeftGeometry);
     observation.right_valid = detection.eyes[1].valid;
-    observation.right_valid_known = true;
+    observation.right_valid_known = zarr::EyeGeometryFieldsCover(
+        frame->loaded_fields, zarr::EyeGeometryFields::RightGeometry);
     observation.fields = {
         scalarField("eye_frame", "Left eye-frame angle",
                     detection.eyes[0].eye_frame_angle_degrees,
@@ -152,6 +154,16 @@ EyeAngleInspectPresentation makeEyeGeometryOverlayInspectPresentation(
         vectorField("Right gaze", detection.eyes[1].gaze,
                     detection.eyes[1].valid && detection.eyes[1].gaze_valid),
     };
+    const zarr::EyeGeometryFieldMask fields[] = {
+        zarr::EyeGeometryFields::LeftAngle, zarr::EyeGeometryFields::RightAngle,
+        zarr::EyeGeometryFields::Vergence, zarr::EyeGeometryFields::LeftSigned,
+        zarr::EyeGeometryFields::RightSigned, zarr::EyeGeometryFields::LeftGaze,
+        zarr::EyeGeometryFields::RightGaze};
+    for (size_t i = 0; i < observation.fields.size(); ++i) {
+      observation.fields[i].loaded =
+          zarr::EyeGeometryFieldsCover(frame->loaded_fields, fields[i]);
+      observation.fields[i].valid &= observation.fields[i].loaded;
+    }
     presentation.observations.push_back(std::move(observation));
   }
   return presentation;

@@ -8,6 +8,8 @@
 
 namespace crimson::zarr {
 
+class SharedMaskFrameIndex;
+
 struct SubjectMaskOverlayOpenOptions {
   std::string requested_run;
   std::string expected_manifest_payload_digest;
@@ -17,6 +19,7 @@ struct SubjectMaskOverlayOpenOptions {
   std::string presentation_cache_run;
   std::string expected_presentation_cache_manifest_payload_digest;
   bool contour_only = false;
+  std::shared_ptr<const SharedMaskFrameIndex> shared_mask_frame_index;
   // Optional bounded interactive policy. Zero retains legacy behavior.
   size_t max_read_rows = 0;
   uint64_t max_cached_payload_bytes = 0;

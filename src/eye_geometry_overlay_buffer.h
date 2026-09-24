@@ -8,6 +8,13 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
+
+struct EyeGeometryFrameDemand {
+  int64_t frame = -1;
+  crimson::zarr::EyeGeometryFieldMask fields = 0;
+  bool lookahead = false;
+};
 
 struct EyeGeometryOverlayBufferMetrics {
   uint64_t requests = 0;
@@ -46,6 +53,12 @@ public:
   bool requestFrame(int64_t camera_frame, int full_frame_width,
                     int full_frame_height, bool discontinuity = false,
                     std::string *error = nullptr);
+  // Scheduler-backed canonical demand. Each call replaces the desired frame
+  // set; callers combine camera and inspection demand before submitting it.
+  bool requestFrames(const std::vector<EyeGeometryFrameDemand> &demands,
+                     int full_frame_width, int full_frame_height,
+                     bool discontinuity = false,
+                     std::string *error = nullptr);
   bool waitForFrame(int64_t camera_frame,
                     std::chrono::milliseconds timeout) const;
   std::shared_ptr<const crimson::zarr::EyeGeometryOverlayResolution>

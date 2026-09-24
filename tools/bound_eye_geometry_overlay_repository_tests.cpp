@@ -86,6 +86,7 @@ struct Fixture {
   bool missing_named_channel = false;
   bool unavailable_named_channel = false;
   bool invalid_body_frame = false;
+  bool nonfinite_body_origin = false;
   bool nonfinite_gaze = false;
 
   bool create() {
@@ -258,7 +259,9 @@ struct Fixture {
          invalid_body_frame ? std::vector<bool>{false, true, true} :
                               std::vector<bool>{true, true, true})));
     for (const auto &item : std::array<std::pair<std::string, std::vector<float>>, 3>{{
-        {"origin_xy", {30, 20, 30, 20, 30, 20}},
+        {"origin_xy", {nonfinite_body_origin ?
+            std::numeric_limits<float>::quiet_NaN() : 30.0f,
+            20, 30, 20, 30, 20}},
         {"forward_axis_xy", {1, 0, 1, 0, 1, 0}},
         {"left_axis_xy", {0, 1, 0, 1, 0, 1}}}})
       CHECK((writeArray<float, 2>(temp.path, eye + "/support/body_frame/" +
@@ -439,10 +442,146 @@ bool testRejections() {
   return true;
 }
 
+bool testSelectiveDemand() {
+  Fixture f;
+  CHECK(f.create());
+  std::string error;
+  auto reader = f.openReader(&error);
+  CHECK(reader != nullptr);
+  using namespace EyeGeometryFields;
+  auto axes = reader->resolveCameraFrameFields(0, 400, 200, LeftGeometry);
+  CHECK(axes.status == EyeGeometryOverlayStatus::Mapped);
+  CHECK(axes.loaded_fields == LeftGeometry);
+  CHECK(axes.detections[0].eyes[0].valid);
+  CHECK(!axes.detections[0].eyes[0].gaze_valid);
+  CHECK(!axes.detections[0].eyes[1].valid);
+  CHECK(!axes.detections[0].body_frame_valid);
+  const auto axes_metrics = reader->accessMetrics();
+  CHECK(axes_metrics.payload_read_calls == 14);
+  CHECK(axes_metrics.peak_inflight_payload_reads > 1 &&
+        axes_metrics.peak_inflight_payload_reads <= 4);
+  for (const auto &array : axes_metrics.per_array) {
+    CHECK(array.calls > 0 && array.future_elapsed_count == array.calls);
+    CHECK(array.array != "E/roi_angles" && array.array != "E/roi_vectors");
+    CHECK(array.array.find("body_frame") == std::string::npos);
+    CHECK(array.array.find("eye_right/ellipse") == std::string::npos);
+  }
+  auto axes_repeat = reader->resolveCameraFrameFields(0, 400, 200, LeftGeometry);
+  CHECK(axes_repeat.status == EyeGeometryOverlayStatus::Mapped);
+  CHECK(reader->accessMetrics().payload_read_calls == axes_metrics.payload_read_calls);
+  auto signed_angle = reader->resolveCameraFrameFields(0, 400, 200, LeftSigned);
+  CHECK(signed_angle.status == EyeGeometryOverlayStatus::Mapped);
+  CHECK((signed_angle.loaded_fields & (LeftGeometry | BodyFrame | LeftSigned)) ==
+        (LeftGeometry | BodyFrame | LeftSigned));
+  CHECK(signed_angle.detections[0].eyes[0].signed_angle_valid);
+  CHECK(!signed_angle.detections[0].eyes[0].gaze_valid);
+  CHECK(reader->accessMetrics().payload_read_calls > axes_metrics.payload_read_calls);
+  auto full = reader->resolveCameraFrame(0, 400, 200);
+  CHECK(full.status == EyeGeometryOverlayStatus::Mapped);
+  CHECK(full.loaded_fields == All);
+  CHECK(full.detections[0].eyes[0].gaze_valid);
+  CHECK(full.detections[0].eyes[0].eye_frame_angle_valid);
+  CHECK(full.detections[0].vergence_valid);
+  const auto before_downgrade = reader->accessMetrics();
+  auto downgrade = reader->resolveCameraFrameFields(0, 400, 200, LeftGeometry);
+  CHECK(downgrade.status == EyeGeometryOverlayStatus::Mapped);
+  CHECK(downgrade.loaded_fields == All);
+  CHECK(reader->accessMetrics().payload_read_calls ==
+        before_downgrade.payload_read_calls);
+  return true;
+}
+
+bool testBodyDependencyStillGatesMeasuredFields() {
+  Fixture f;
+  f.nonfinite_body_origin = true;
+  CHECK(f.create());
+  std::string error;
+  auto reader = f.openReader(&error);
+  CHECK(reader != nullptr);
+  auto axes = reader->resolveCameraFrameFields(0, 400, 200,
+      EyeGeometryFields::LeftGeometry);
+  CHECK(axes.status == EyeGeometryOverlayStatus::Mapped);
+  CHECK(axes.detections[0].eyes[0].valid);
+  auto measured = reader->resolveCameraFrameFields(0, 400, 200,
+      EyeGeometryFields::LeftGaze | EyeGeometryFields::LeftSigned |
+      EyeGeometryFields::LeftAngle);
+  CHECK(measured.status == EyeGeometryOverlayStatus::Mapped);
+  CHECK(measured.detections[0].eyes[0].valid);
+  CHECK(!measured.detections[0].body_frame_valid);
+  CHECK(!measured.detections[0].eyes[0].gaze_valid);
+  CHECK(!measured.detections[0].eyes[0].signed_angle_valid);
+  CHECK(!measured.detections[0].eyes[0].eye_frame_angle_valid);
+  return true;
+}
+
+bool testCancellationBeforePayload() {
+  Fixture f;
+  CHECK(f.create());
+  std::string error;
+  auto reader = f.openReader(&error);
+  CHECK(reader != nullptr);
+  int checks = 0;
+  auto result = reader->resolveCameraFrameFields(0, 400, 200,
+      EyeGeometryFields::All, [&] { return ++checks >= 5; });
+  CHECK(result.status == EyeGeometryOverlayStatus::ReadFailed);
+  CHECK(result.loaded_fields == 0 && result.detections.empty());
+  const auto metrics = reader->accessMetrics();
+  CHECK(metrics.payload_read_calls == 10);
+  for (const auto &array : metrics.per_array)
+    CHECK(array.array.find("ellipse") == std::string::npos &&
+          array.array.find("body_frame") == std::string::npos &&
+          array.array != "E/roi_angles" && array.array != "E/roi_vectors" &&
+          array.array != "E/roi_qa");
+  return true;
+}
+
+bool testCancellationAfterPayloadDrain() {
+  Fixture f;
+  CHECK(f.create());
+  std::string error;
+  auto reader = f.openReader(&error);
+  CHECK(reader != nullptr);
+  int checks = 0;
+  auto result = reader->resolveCameraFrameFields(0, 400, 200,
+      EyeGeometryFields::All, [&] { return ++checks >= 10; });
+  CHECK(result.status == EyeGeometryOverlayStatus::ReadFailed);
+  CHECK(result.loaded_fields == 0 && result.detections.empty());
+  const auto metrics = reader->accessMetrics();
+  CHECK(metrics.payload_read_calls == 28);
+  CHECK(metrics.peak_inflight_payload_reads == 4);
+  auto retry = reader->resolveCameraFrameFields(0, 400, 200,
+      EyeGeometryFields::LeftGeometry);
+  CHECK(retry.status == EyeGeometryOverlayStatus::Mapped);
+  CHECK(retry.loaded_fields == EyeGeometryFields::LeftGeometry);
+  CHECK(reader->accessMetrics().payload_read_calls > metrics.payload_read_calls);
+  return true;
+}
+
+bool testCancellationBetweenPayloadWaves() {
+  Fixture f;
+  CHECK(f.create());
+  std::string error;
+  auto reader = f.openReader(&error);
+  CHECK(reader != nullptr);
+  int checks = 0;
+  auto result = reader->resolveCameraFrameFields(0, 400, 200,
+      EyeGeometryFields::All, [&] { return ++checks >= 6; });
+  CHECK(result.status == EyeGeometryOverlayStatus::ReadFailed);
+  CHECK(result.loaded_fields == 0 && result.detections.empty());
+  const auto metrics = reader->accessMetrics();
+  CHECK(metrics.payload_read_calls == 14);
+  CHECK(metrics.peak_inflight_payload_reads == 4);
+  return true;
+}
+
 } // namespace
 
 int main() {
-  if (!testBoundReader() || !testRejections()) return 1;
+  if (!testBoundReader() || !testRejections() ||
+      !testSelectiveDemand() || !testCancellationBeforePayload() ||
+      !testCancellationAfterPayloadDrain() ||
+      !testCancellationBetweenPayloadWaves() ||
+      !testBodyDependencyStillGatesMeasuredFields()) return 1;
   std::cout << "bound eye geometry overlay tests passed\n";
   return 0;
 }

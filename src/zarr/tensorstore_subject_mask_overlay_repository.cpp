@@ -33,6 +33,7 @@
 #include "zarr/archive_context_internal.h"
 #include "zarr/canonical_json.h"
 #include "zarr/subject_mask_sampled_contour_v1_contract.h"
+#include "zarr/shared_mask_frame_index.h"
 #include "zarr/subject_mask_v1_contract.h"
 #include "zarr/zarr_metadata_equivalence.h"
 
@@ -788,6 +789,7 @@ class TensorStoreSubjectMaskOverlayRepository final
   TensorStoreSubjectMaskOverlayRepository(
       SubjectMaskOverlayDescriptor descriptor, std::vector<RowMetadata> rows,
       std::vector<int64_t> frame_row_offsets,
+      std::shared_ptr<const SharedMaskFrameIndex> shared_mask_frame_index,
       std::unique_ptr<LazyMappingSource> lazy_mapping,
       std::vector<uint8_t> available_channels,
       ts::TensorStore<uint8_t, 4> dense, ts::TensorStore<uint8_t, 4> bitpacked,
@@ -798,6 +800,7 @@ class TensorStoreSubjectMaskOverlayRepository final
       SubjectMaskOverlayOpenOptions limits = {})
       : descriptor_(std::move(descriptor)), rows_(std::move(rows)),
         frame_row_offsets_(std::move(frame_row_offsets)),
+        shared_mask_frame_index_(std::move(shared_mask_frame_index)),
         lazy_mapping_(std::move(lazy_mapping)),
         available_channels_(std::move(available_channels)),
         dense_(std::move(dense)), bitpacked_(std::move(bitpacked)),
@@ -807,7 +810,7 @@ class TensorStoreSubjectMaskOverlayRepository final
         metrics_(std::move(opening_metrics)) {
     if (lazy_mapping_) {
       metrics_.lazy_mapping = true;
-    } else if (frame_row_offsets_.empty()) {
+    } else if (frame_row_offsets_.empty() && !shared_mask_frame_index_) {
       const auto index_started = std::chrono::steady_clock::now();
       for (size_t index = 0; index < rows_.size(); ++index) {
         rows_by_frame_[rows_[index].camera_frame].push_back(index);
@@ -818,7 +821,8 @@ class TensorStoreSubjectMaskOverlayRepository final
     metrics_.metadata_retained_bytes += VectorCapacityBytes(frame_row_offsets_);
     metrics_.metadata_retained_bytes +=
         VectorCapacityBytes(available_channels_);
-    if (!lazy_mapping_ && frame_row_offsets_.empty()) {
+    if (!lazy_mapping_ && frame_row_offsets_.empty() &&
+        !shared_mask_frame_index_) {
       for (const auto& entry : rows_by_frame_) {
         AddBytes(&metrics_.metadata_retained_bytes, 1, sizeof(entry));
         metrics_.metadata_retained_bytes += VectorCapacityBytes(entry.second);
@@ -915,10 +919,13 @@ class TensorStoreSubjectMaskOverlayRepository final
         result.error = std::move(mapping_error);
         return result;
       }
-    } else if (!frame_row_offsets_.empty()) {
+    } else if (!frame_row_offsets_.empty() || shared_mask_frame_index_) {
       const size_t frame = static_cast<size_t>(camera_frame);
-      const size_t first = static_cast<size_t>(frame_row_offsets_[frame]);
-      const size_t last = static_cast<size_t>(frame_row_offsets_[frame + 1]);
+      const auto& offsets = shared_mask_frame_index_
+                                ? shared_mask_frame_index_->offsets()
+                                : frame_row_offsets_;
+      const size_t first = static_cast<size_t>(offsets[frame]);
+      const size_t last = static_cast<size_t>(offsets[frame + 1]);
       if (limits_.max_observations_per_frame &&
           last - first > limits_.max_observations_per_frame) {
         result.status = SubjectMaskOverlayStatus::ReadFailed;
@@ -2125,6 +2132,7 @@ class TensorStoreSubjectMaskOverlayRepository final
   SubjectMaskOverlayDescriptor descriptor_;
   std::vector<RowMetadata> rows_;
   std::vector<int64_t> frame_row_offsets_;
+  std::shared_ptr<const SharedMaskFrameIndex> shared_mask_frame_index_;
   std::unordered_map<int64_t, std::vector<size_t>> rows_by_frame_;
   std::unique_ptr<LazyMappingSource> lazy_mapping_;
   std::vector<uint8_t> available_channels_;
@@ -2703,7 +2711,8 @@ bool ValidateStrictMetadata(const ArchiveContext::Impl &archive,
 }
 
 std::unique_ptr<SubjectMaskOverlayRepository>
-OpenStrictSubjectMaskV1(const ArchiveContext::Impl &archive,
+OpenStrictSubjectMaskV1(const std::shared_ptr<ArchiveContext>& archive_owner,
+                        const ArchiveContext::Impl &archive,
                         const std::string &run_name,
                         const std::string &run_base, const json &run_attributes,
                         const SubjectMaskOverlayOpenOptions &options,
@@ -2731,13 +2740,37 @@ OpenStrictSubjectMaskV1(const ArchiveContext::Impl &archive,
         "benchmark request");
     return nullptr;
   }
+  const auto shared_index = options.shared_mask_frame_index;
+  if (shared_index) {
+    std::string offset_digest;
+    try {
+      offset_digest = manifest->at("payload").at("logical_content")
+                          .at("document").at("arrays")
+                          .at("frame_row_offsets").at("sha256")
+                          .get<std::string>();
+    } catch (const json::exception&) {
+      internal::SetArchiveError(error_message,
+                                "Shared mask offset declaration is malformed");
+      return nullptr;
+    }
+    if (!shared_index->matchesMask(archive_owner, run_name,
+                                  summary.payload_digest, offset_digest,
+                                  summary.frame_count, summary.row_count) ||
+        (options.max_observations_per_frame != 0 &&
+         !shared_index->admits(options.max_observations_per_frame))) {
+      internal::SetArchiveError(error_message,
+                                "Shared mask frame index binding or admission disagrees");
+      return nullptr;
+    }
+  }
 
   // Admit known mapping allocations before opening/reading full vectors. This
   // is not an RSS cap: archive JSON, TensorStore and allocator overhead remain
   // separately measured. Include temporary columns and key-validation space.
   uint64_t mapping_bytes = 0;
   AddBytes(&mapping_bytes, summary.row_count, sizeof(RowMetadata) + 40 + 64);
-  AddBytes(&mapping_bytes, summary.frame_count + 1, 2 * sizeof(int64_t));
+  if (!shared_index)
+    AddBytes(&mapping_bytes, summary.frame_count + 1, 2 * sizeof(int64_t));
   if (options.max_mapping_bytes && mapping_bytes > options.max_mapping_bytes) {
     internal::SetArchiveError(error_message, "Subject-mask mappings exceed interactive admission budget");
     return nullptr;
@@ -2830,7 +2863,7 @@ OpenStrictSubjectMaskV1(const ArchiveContext::Impl &archive,
   if (!open("source_crop_row_ids", &source_crop_rows_store) ||
       !open("instance_key", &instance_keys_store) ||
       !open("source_acquisition_frame_index", &source_frames_store) ||
-      !open("frame_row_offsets", &offsets_store) ||
+      (!shared_index && !open("frame_row_offsets", &offsets_store)) ||
       !open("source_crop_xywh", &placements_store) ||
       !open("masks_roi", &masks_store) ||
       !open("available_channels", &available_store) ||
@@ -2867,8 +2900,9 @@ OpenStrictSubjectMaskV1(const ArchiveContext::Impl &archive,
   std::vector<uint64_t> instance_keys;
   std::vector<float> placements;
   std::vector<uint8_t> available;
-  if (!ReadExactVector(offsets_store, &offsets, error_message,
-                       run_base + "/frame_row_offsets") ||
+  if ((!shared_index &&
+       !ReadExactVector(offsets_store, &offsets, error_message,
+                        run_base + "/frame_row_offsets")) ||
       !ReadExactVector(source_frames_store, &frames, error_message,
                        run_base + "/source_acquisition_frame_index") ||
       !ReadExactVector(source_crop_rows_store, &source_crop_rows, error_message,
@@ -2882,25 +2916,31 @@ OpenStrictSubjectMaskV1(const ArchiveContext::Impl &archive,
     return nullptr;
   }
   opening_metrics.mapping_read_ms = ElapsedMilliseconds(mapping_started);
-  opening_metrics.frame_offset_reads = 1;
-  opening_metrics.frame_index_initialize_ms = opening_metrics.mapping_read_ms;
-  opening_metrics.frame_index_rows_read = offsets.size();
-  opening_metrics.frame_index_source_bytes = offsets.size() * sizeof(int64_t);
+  const auto& effective_offsets =
+      shared_index ? shared_index->offsets() : offsets;
+  opening_metrics.frame_offset_reads = shared_index ? 0 : 1;
+  opening_metrics.frame_index_initialize_ms =
+      shared_index ? 0.0 : opening_metrics.mapping_read_ms;
+  opening_metrics.frame_index_rows_read = shared_index ? 0 : offsets.size();
+  opening_metrics.frame_index_source_bytes =
+      shared_index ? 0 : offsets.size() * sizeof(int64_t);
   opening_metrics.frame_index_retained_bytes =
-      offsets.capacity() * sizeof(int64_t);
+      shared_index ? 0 : offsets.capacity() * sizeof(int64_t);
+  opening_metrics.frame_index_borrowed_bytes =
+      shared_index ? shared_index->retainedBytes() : 0;
 
-  if (offsets.size() != summary.frame_count + 1 ||
+  if (effective_offsets.size() != summary.frame_count + 1 ||
       frames.size() != summary.row_count ||
       source_crop_rows.size() != summary.row_count ||
       instance_keys.size() != summary.row_count ||
       placements.size() != summary.row_count * 4 ||
-      available.size() != summary.channel_count || offsets.front() != 0 ||
-      offsets.back() != static_cast<int64_t>(summary.row_count)) {
+      available.size() != summary.channel_count || effective_offsets.front() != 0 ||
+      effective_offsets.back() != static_cast<int64_t>(summary.row_count)) {
     internal::SetArchiveError(
         error_message, "Subject-mask v1 retained mapping shape mismatch");
     return nullptr;
   }
-  if (!ValidateSubjectMaskV1FrameIndex(offsets, frames, summary.frame_count,
+  if (!ValidateSubjectMaskV1FrameIndex(effective_offsets, frames, summary.frame_count,
                                        summary.row_count, error_message) ||
       !ValidateSubjectMaskV1InstanceKeys(instance_keys, summary.row_count,
                                          error_message)) {
@@ -2962,11 +3002,13 @@ OpenStrictSubjectMaskV1(const ArchiveContext::Impl &archive,
       placements.capacity() * sizeof(float);
   opening_metrics.metadata_decoded_bytes =
       opening_metrics.subject_mapping_bytes +
-      offsets.capacity() * sizeof(int64_t) + available.capacity();
+      (shared_index ? 0 : offsets.capacity() * sizeof(int64_t)) +
+      available.capacity();
   opening_metrics.metadata_index_ms = 0.0;
 
   return std::make_unique<TensorStoreSubjectMaskOverlayRepository>(
-      std::move(descriptor), std::move(rows), std::move(offsets), nullptr,
+      std::move(descriptor), std::move(rows), std::move(offsets),
+      shared_index, nullptr,
       std::move(available), std::move(masks_store),
       ts::TensorStore<uint8_t, 4>{}, std::vector<RleSource>{},
       std::move(presentation_contours), !options.contour_only,
@@ -3016,9 +3058,14 @@ std::unique_ptr<SubjectMaskOverlayRepository> OpenSubjectMaskOverlayRepository(
         options.presentation_cache_archive
             ? options.presentation_cache_archive->impl_.get()
             : nullptr;
-    return OpenStrictSubjectMaskV1(impl, run_name, run_base, *run_attributes,
+    return OpenStrictSubjectMaskV1(archive, impl, run_name, run_base, *run_attributes,
                                    options, presentation_cache_archive,
                                    open_started, error_message);
+  }
+  if (options.shared_mask_frame_index) {
+    internal::SetArchiveError(error_message,
+                              "Shared mask frame index requires strict v1");
+    return nullptr;
   }
   if (options.require_strict_v1) {
     internal::SetArchiveError(
@@ -3399,7 +3446,7 @@ std::unique_ptr<SubjectMaskOverlayRepository> OpenSubjectMaskOverlayRepository(
 
   return std::make_unique<TensorStoreSubjectMaskOverlayRepository>(
       std::move(descriptor), std::move(rows), std::vector<int64_t>{},
-      std::move(lazy_mapping), std::move(available), std::move(dense),
+      nullptr, std::move(lazy_mapping), std::move(available), std::move(dense),
       std::move(bitpacked), std::move(rle), std::move(contours), true,
       std::move(opening_metrics), open_started, options);
 }

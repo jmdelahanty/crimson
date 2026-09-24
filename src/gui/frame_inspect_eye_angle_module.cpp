@@ -205,7 +205,9 @@ void drawFrameInspectEyeAngleModule(
           ImGui::TableSetColumnIndex(0);
           ImGui::TextUnformatted(field.label.c_str());
           ImGui::TableSetColumnIndex(1);
-          if (!field.valid) {
+          if (!field.loaded) {
+            ImGui::TextDisabled("not loaded");
+          } else if (!field.valid) {
             ImGui::TextDisabled("n/a");
           } else if (field.kind == EyeAngleInspectFieldKind::Vector2) {
             ImGui::Text("[%.3f, %.3f]", field.value_x, field.value_y);

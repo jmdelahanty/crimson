@@ -1,4 +1,5 @@
 #include "gui/canonical_overlay_presentation.h"
+#include "gui/canonical_eye_demand.h"
 
 #include "zarr/subject_mask_overlay_scene_adapter.h"
 #include "zarr/subject_shape_overlay_scene_adapter.h"
@@ -246,7 +247,9 @@ CanonicalOverlayPresentation makeCanonicalOverlayPresentation(
     overlay::applyReadOnlyOverlayControls(controls, &input);
     result.shapes = overlay::buildReadOnlyOverlayScene(input);
   }
-  if (resolved(snapshot.eyes.state) && snapshot.eyes.frame) {
+  if (resolved(snapshot.eyes.state) && snapshot.eyes.frame &&
+      zarr::EyeGeometryFieldsCover(snapshot.eyes.frame->loaded_fields,
+                                  canonicalCameraEyeFields(controls))) {
     auto input = zarr::makeEyeGeometryOverlaySceneInput(
         snapshot.eyes.descriptor, *snapshot.eyes.frame, view, presented_frame,
         view, source_width, source_height);

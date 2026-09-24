@@ -5,11 +5,44 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
 
 namespace crimson::zarr {
+
+using EyeGeometryFieldMask = uint32_t;
+namespace EyeGeometryFields {
+constexpr EyeGeometryFieldMask LeftGeometry = 1u << 0;
+constexpr EyeGeometryFieldMask RightGeometry = 1u << 1;
+constexpr EyeGeometryFieldMask BodyFrame = 1u << 2;
+constexpr EyeGeometryFieldMask LeftGaze = 1u << 3;
+constexpr EyeGeometryFieldMask RightGaze = 1u << 4;
+constexpr EyeGeometryFieldMask LeftSigned = 1u << 5;
+constexpr EyeGeometryFieldMask RightSigned = 1u << 6;
+constexpr EyeGeometryFieldMask LeftAngle = 1u << 7;
+constexpr EyeGeometryFieldMask RightAngle = 1u << 8;
+constexpr EyeGeometryFieldMask Vergence = 1u << 9;
+constexpr EyeGeometryFieldMask All = (1u << 10) - 1;
+}
+
+inline EyeGeometryFieldMask NormalizeEyeGeometryFields(EyeGeometryFieldMask fields) {
+  fields &= EyeGeometryFields::All;
+  if (fields & (EyeGeometryFields::LeftGaze | EyeGeometryFields::LeftSigned |
+                EyeGeometryFields::LeftAngle | EyeGeometryFields::Vergence))
+    fields |= EyeGeometryFields::LeftGeometry | EyeGeometryFields::BodyFrame;
+  if (fields & (EyeGeometryFields::RightGaze | EyeGeometryFields::RightSigned |
+                EyeGeometryFields::RightAngle | EyeGeometryFields::Vergence))
+    fields |= EyeGeometryFields::RightGeometry | EyeGeometryFields::BodyFrame;
+  return fields;
+}
+
+inline bool EyeGeometryFieldsCover(EyeGeometryFieldMask loaded,
+                                   EyeGeometryFieldMask requested) {
+  requested = NormalizeEyeGeometryFields(requested);
+  return (loaded & requested) == requested;
+}
 
 struct EyeGeometryPoint {
   double x = 0.0;
@@ -90,6 +123,7 @@ struct EyeGeometryOverlayResolution {
   int64_t camera_frame = -1;
   std::vector<EyeGeometryOverlayDetection> detections;
   std::string error;
+  EyeGeometryFieldMask loaded_fields = EyeGeometryFields::All;
 };
 
 class EyeGeometryOverlayRepository {
@@ -99,12 +133,36 @@ public:
   virtual EyeGeometryOverlayResolution
   resolveCameraFrame(int64_t camera_frame, int full_frame_width,
                      int full_frame_height) const = 0;
+  virtual EyeGeometryOverlayResolution resolveCameraFrameFields(
+      int64_t camera_frame, int full_frame_width, int full_frame_height,
+      EyeGeometryFieldMask fields,
+      const std::function<bool()> &cancelled = {}) const {
+    if (cancelled && cancelled()) return {};
+    auto result = resolveCameraFrame(camera_frame, full_frame_width,
+                                     full_frame_height);
+    if (result.status == EyeGeometryOverlayStatus::Mapped)
+      result.loaded_fields = EyeGeometryFields::All;
+    return result;
+  }
   virtual RepositoryMemoryMetrics memoryMetrics() const { return {}; }
   struct AccessMetrics {
+    struct ArrayReadMetrics {
+      std::string array;
+      uint64_t calls = 0;
+      uint64_t logical_bytes = 0;
+      uint64_t failures = 0;
+      // Dispatch-to-consumption latency includes batch queueing and earlier
+      // future joins; it is not isolated disk, transfer, or decode time.
+      uint64_t future_elapsed_count = 0;
+      uint64_t future_elapsed_ns_sum = 0;
+      uint64_t future_elapsed_ns_max = 0;
+    };
     uint64_t payload_read_calls = 0;
     uint64_t logical_payload_bytes_read = 0;
     uint64_t retained_decoded_cache_bytes = 0;
     uint64_t cache_hits = 0;
+    uint64_t peak_inflight_payload_reads = 0;
+    std::vector<ArrayReadMetrics> per_array;
   };
   virtual AccessMetrics accessMetrics() const { return {}; }
 };

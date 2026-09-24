@@ -52,6 +52,12 @@ struct EyeGeometryOverlayBuffer::Impl {
       std::shared_ptr<const crimson::zarr::EyeGeometryOverlayResolution>>
       cache;
   std::deque<int64_t> cache_order;
+  std::unordered_map<int64_t, crimson::zarr::EyeGeometryFieldMask>
+      terminal_attempted_fields;
+  std::unordered_map<int64_t, crimson::zarr::EyeGeometryFieldMask> desired_fields;
+  std::unordered_map<int64_t, crimson::zarr::EyeGeometryFieldMask> submitted_fields;
+  int demand_width = 0;
+  int demand_height = 0;
   EyeGeometryOverlayBufferMetrics metrics;
 
   void clearPendingLocked() {
@@ -76,6 +82,7 @@ struct EyeGeometryOverlayBuffer::Impl {
   void clearCacheLocked() {
     cache.clear();
     cache_order.clear();
+    terminal_attempted_fields.clear();
   }
 
   void publishLocked(
@@ -90,6 +97,7 @@ struct EyeGeometryOverlayBuffer::Impl {
       const int64_t evicted = cache_order.front();
       cache_order.pop_front();
       cache.erase(evicted);
+      terminal_attempted_fields.erase(evicted);
     }
     metrics.peak_cached_frames =
         std::max(metrics.peak_cached_frames, cache.size());
@@ -195,6 +203,10 @@ bool EyeGeometryOverlayBuffer::open(
     impl_->generation = 1;
     impl_->last_request = -1;
     impl_->demanded = false;
+    impl_->desired_fields.clear();
+    impl_->submitted_fields.clear();
+    impl_->demand_width = 0;
+    impl_->demand_height = 0;
     impl_->metrics = {};
   }
   if (!impl_->scheduler)
@@ -227,6 +239,10 @@ void EyeGeometryOverlayBuffer::close() {
   impl_->stopping = false;
   impl_->last_request = -1;
   impl_->demanded = false;
+  impl_->desired_fields.clear();
+  impl_->submitted_fields.clear();
+  impl_->demand_width = 0;
+  impl_->demand_height = 0;
 }
 
 void EyeGeometryOverlayBuffer::suspend() {
@@ -236,6 +252,8 @@ void EyeGeometryOverlayBuffer::suspend() {
   ++impl_->generation;
   impl_->scheduler->cancelSource(impl_->scheduler_source);
   impl_->clearCacheLocked();
+  impl_->desired_fields.clear();
+  impl_->submitted_fields.clear();
   impl_->last_request = -1;
   impl_->condition.notify_all();
 }
@@ -263,6 +281,8 @@ bool EyeGeometryOverlayBuffer::requestFrame(int64_t camera_frame,
   }
   ++impl_->metrics.requests;
   impl_->demanded = true;
+  impl_->desired_fields.clear();
+  impl_->submitted_fields.clear();
   const bool jumped = impl_->last_request >= 0 &&
                       (camera_frame < impl_->last_request ||
                        camera_frame - impl_->last_request >
@@ -292,7 +312,11 @@ bool EyeGeometryOverlayBuffer::requestFrame(int64_t camera_frame,
                       : camera_frame;
   }
   impl_->retainPendingWindowLocked(camera_frame, final_frame);
-  if (impl_->cache.find(camera_frame) != impl_->cache.end()) {
+  const auto cached_current = impl_->cache.find(camera_frame);
+  if (cached_current != impl_->cache.end() &&
+      crimson::zarr::EyeGeometryFieldsCover(
+          cached_current->second->loaded_fields,
+          crimson::zarr::EyeGeometryFields::All)) {
     ++impl_->metrics.cache_hits;
   }
   if (impl_->scheduler) {
@@ -300,7 +324,11 @@ bool EyeGeometryOverlayBuffer::requestFrame(int64_t camera_frame,
         impl_->scheduler_source, impl_->generation,
         {camera_frame, final_frame});
     for (int64_t frame = camera_frame; frame <= final_frame; ++frame) {
-      if (impl_->cache.find(frame) != impl_->cache.end()) continue;
+      const auto cached = impl_->cache.find(frame);
+      if (cached != impl_->cache.end() &&
+          crimson::zarr::EyeGeometryFieldsCover(
+              cached->second->loaded_fields,
+              crimson::zarr::EyeGeometryFields::All)) continue;
       const uint64_t generation = impl_->generation;
       crimson::data::DataRangeRequest request{
           impl_->scheduler_source, {frame, frame},
@@ -376,7 +404,11 @@ bool EyeGeometryOverlayBuffer::requestFrame(int64_t camera_frame,
     return true;
   }
   for (int64_t frame = camera_frame; frame <= final_frame; ++frame) {
-    if (impl_->cache.find(frame) != impl_->cache.end() ||
+    const auto cached = impl_->cache.find(frame);
+    if ((cached != impl_->cache.end() &&
+         crimson::zarr::EyeGeometryFieldsCover(
+             cached->second->loaded_fields,
+             crimson::zarr::EyeGeometryFields::All)) ||
         impl_->pending_frames.find(frame) != impl_->pending_frames.end() ||
         (impl_->active_request &&
          impl_->active_request->generation == impl_->generation &&
@@ -390,6 +422,245 @@ bool EyeGeometryOverlayBuffer::requestFrame(int64_t camera_frame,
   impl_->metrics.peak_pending_frames =
       std::max(impl_->metrics.peak_pending_frames, impl_->pending.size());
   impl_->condition.notify_all();
+  return true;
+}
+
+bool EyeGeometryOverlayBuffer::requestFrames(
+    const std::vector<EyeGeometryFrameDemand> &demands,
+    int full_frame_width, int full_frame_height, bool discontinuity,
+    std::string *error) {
+  std::vector<EyeGeometryFrameDemand> prioritized;
+  std::unordered_map<int64_t, size_t> positions;
+  for (const auto &demand : demands) {
+    if (demand.frame < 0 ||
+        (demand.fields & ~crimson::zarr::EyeGeometryFields::All) != 0) {
+      assignError(error, "Eye-geometry frame demand is invalid");
+      return false;
+    }
+    const auto fields = crimson::zarr::NormalizeEyeGeometryFields(demand.fields);
+    if (!fields) continue;
+    const auto found = positions.find(demand.frame);
+    if (found == positions.end()) {
+      positions.emplace(demand.frame, prioritized.size());
+      prioritized.push_back({demand.frame, fields, demand.lookahead});
+    } else {
+      auto &existing = prioritized[found->second];
+      existing.fields |= fields;
+      existing.lookahead = existing.lookahead || demand.lookahead;
+    }
+  }
+  if (prioritized.empty()) {
+    suspend();
+    return true;
+  }
+  if (full_frame_width <= 0 || full_frame_height <= 0) {
+    assignError(error, "Eye-geometry frame dimensions are invalid");
+    return false;
+  }
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  if (!impl_->repository || !impl_->scheduler || impl_->stopping) {
+    assignError(error, "Eye-geometry multi-frame demand requires an open scheduler buffer");
+    return false;
+  }
+  const auto frame_count = impl_->descriptor.camera_frame_count;
+  for (const auto &demand : prioritized) {
+    if (frame_count && static_cast<uint64_t>(demand.frame) >= frame_count) {
+      assignError(error, "Eye-geometry frame demand is out of range");
+      return false;
+    }
+  }
+  ++impl_->metrics.requests;
+  const bool dimensions_changed = impl_->demand_width != 0 &&
+      (impl_->demand_width != full_frame_width ||
+       impl_->demand_height != full_frame_height);
+  if (discontinuity || dimensions_changed) {
+    ++impl_->generation;
+    impl_->scheduler->cancelSource(impl_->scheduler_source);
+    impl_->clearCacheLocked();
+    impl_->submitted_fields.clear();
+  }
+  impl_->demanded = true;
+  impl_->demand_width = full_frame_width;
+  impl_->demand_height = full_frame_height;
+  impl_->last_request = -1;
+
+  // Every input is an actual consumer; the flag enables two future frames.
+  // Actual consumers take capacity before generated speculative work.
+  const size_t actual_count = prioritized.size();
+  if (actual_count > impl_->capacity) {
+    assignError(error, "Eye-geometry actual demand exceeds cache capacity");
+    return false;
+  }
+  std::unordered_set<int64_t> speculative_frames;
+  if (actual_count < impl_->capacity) {
+    const size_t initial_count = prioritized.size();
+    for (size_t index = 0; index < initial_count; ++index) {
+      const auto seed = prioritized[index];
+      if (!seed.lookahead) continue;
+      for (size_t step = 1; step <= std::min<size_t>(impl_->lookahead, 2); ++step) {
+        if (seed.frame > std::numeric_limits<int64_t>::max() -
+                             static_cast<int64_t>(step)) break;
+        const int64_t next = seed.frame + static_cast<int64_t>(step);
+        if (frame_count && static_cast<uint64_t>(next) >= frame_count) break;
+        const auto found = positions.find(next);
+        if (found == positions.end()) {
+          positions.emplace(next, prioritized.size());
+          prioritized.push_back({next, seed.fields, false});
+          speculative_frames.insert(next);
+        } else if (speculative_frames.find(next) != speculative_frames.end()) {
+          prioritized[found->second].fields |= seed.fields;
+        }
+      }
+    }
+  }
+  if (prioritized.size() > impl_->capacity)
+    prioritized.resize(impl_->capacity);
+
+  impl_->desired_fields.clear();
+  for (auto it = impl_->submitted_fields.begin();
+       it != impl_->submitted_fields.end();) {
+    if (std::none_of(prioritized.begin(), prioritized.end(),
+                     [&](const auto &demand) { return demand.frame == it->first; }))
+      it = impl_->submitted_fields.erase(it);
+    else
+      ++it;
+  }
+  int64_t first = prioritized.front().frame;
+  int64_t last = first;
+  for (const auto &demand : prioritized) {
+    impl_->desired_fields.emplace(demand.frame, demand.fields);
+    first = std::min(first, demand.frame);
+    last = std::max(last, demand.frame);
+  }
+  impl_->scheduler->retainSourceRange(
+      impl_->scheduler_source, impl_->generation, {first, last});
+  for (const auto &demand : prioritized) {
+    const auto cached = impl_->cache.find(demand.frame);
+    const auto attempted = impl_->terminal_attempted_fields.find(demand.frame);
+    const bool terminal_independent = cached != impl_->cache.end() &&
+        (cached->second->status == crimson::zarr::EyeGeometryOverlayStatus::Missing ||
+         cached->second->status == crimson::zarr::EyeGeometryOverlayStatus::OutOfRange);
+    if (terminal_independent ||
+        (cached != impl_->cache.end() &&
+         cached->second->status == crimson::zarr::EyeGeometryOverlayStatus::Mapped &&
+         crimson::zarr::EyeGeometryFieldsCover(cached->second->loaded_fields,
+                                                demand.fields)) ||
+        (attempted != impl_->terminal_attempted_fields.end() &&
+         crimson::zarr::EyeGeometryFieldsCover(attempted->second,
+                                                demand.fields))) {
+      ++impl_->metrics.cache_hits;
+      continue;
+    }
+    auto fields = demand.fields;
+    if (cached != impl_->cache.end())
+      fields |= cached->second->loaded_fields;
+    const auto submitted = impl_->submitted_fields.find(demand.frame);
+    if (submitted != impl_->submitted_fields.end())
+      fields |= submitted->second;
+    fields = crimson::zarr::NormalizeEyeGeometryFields(fields);
+    impl_->submitted_fields[demand.frame] = fields;
+    const auto generation = impl_->generation;
+    const auto frame = demand.frame;
+    crimson::data::DataRangeRequest request{
+        impl_->scheduler_source, {frame, frame},
+        crimson::data::FieldSelection::Named({std::to_string(fields)}),
+        speculative_frames.find(frame) != speculative_frames.end()
+            ? crimson::data::RequestPriority::Speculative
+            : crimson::data::RequestPriority::CurrentFrame,
+        discontinuity ? crimson::data::AccessPattern::RandomSeek
+                      : crimson::data::AccessPattern::Forward,
+        generation};
+    const auto outcome = impl_->scheduler->submit(
+        std::move(request),
+        [this, frame, fields, full_frame_width, full_frame_height, generation](
+            const crimson::data::ScheduledDataRequest &scheduled) {
+          if (scheduled.cancellation.cancelled())
+            return crimson::data::DataResultStatus::Stale;
+          {
+            std::lock_guard<std::mutex> guard(impl_->mutex);
+            if (impl_->stopping || generation != impl_->generation ||
+                impl_->desired_fields.find(frame) == impl_->desired_fields.end())
+              return crimson::data::DataResultStatus::Stale;
+          }
+          const auto start = std::chrono::steady_clock::now();
+          crimson::zarr::EyeGeometryOverlayResolution resolved;
+          try {
+            resolved = impl_->repository->resolveCameraFrameFields(
+                frame, full_frame_width, full_frame_height, fields,
+                [&scheduled] { return scheduled.cancellation.cancelled(); });
+          } catch (const std::exception &exception) {
+            resolved.camera_frame = frame;
+            resolved.status = crimson::zarr::EyeGeometryOverlayStatus::ReadFailed;
+            resolved.error = exception.what();
+            resolved.loaded_fields = 0;
+          } catch (...) {
+            resolved.camera_frame = frame;
+            resolved.status = crimson::zarr::EyeGeometryOverlayStatus::ReadFailed;
+            resolved.error = "Eye reader threw an unknown exception";
+            resolved.loaded_fields = 0;
+          }
+          const double elapsed = std::chrono::duration<double, std::milli>(
+              std::chrono::steady_clock::now() - start).count();
+          auto shared = std::make_shared<const crimson::zarr::EyeGeometryOverlayResolution>(
+              std::move(resolved));
+          std::lock_guard<std::mutex> guard(impl_->mutex);
+          impl_->metrics.maximum_resolve_ms =
+              std::max(impl_->metrics.maximum_resolve_ms, elapsed);
+          if (scheduled.cancellation.cancelled() || impl_->stopping ||
+              generation != impl_->generation || !impl_->demanded ||
+              impl_->desired_fields.find(frame) == impl_->desired_fields.end()) {
+            ++impl_->metrics.discarded_results;
+            impl_->condition.notify_all();
+            return crimson::data::DataResultStatus::Stale;
+          }
+          const auto existing = impl_->cache.find(frame);
+          if (shared->status == crimson::zarr::EyeGeometryOverlayStatus::Mapped &&
+              existing != impl_->cache.end() &&
+              existing->second->status == crimson::zarr::EyeGeometryOverlayStatus::Mapped &&
+              crimson::zarr::EyeGeometryFieldsCover(existing->second->loaded_fields,
+                                                     shared->loaded_fields)) {
+            impl_->condition.notify_all();
+            return crimson::data::DataResultStatus::Ready;
+          }
+          auto status = crimson::data::DataResultStatus::Failed;
+          switch (shared->status) {
+            case crimson::zarr::EyeGeometryOverlayStatus::Mapped:
+              ++impl_->metrics.resolved_frames;
+              status = crimson::data::DataResultStatus::Ready;
+              break;
+            case crimson::zarr::EyeGeometryOverlayStatus::Missing:
+            case crimson::zarr::EyeGeometryOverlayStatus::OutOfRange:
+              ++impl_->metrics.missing_frames;
+              status = crimson::data::DataResultStatus::Missing;
+              break;
+            case crimson::zarr::EyeGeometryOverlayStatus::InvalidDimensions:
+            case crimson::zarr::EyeGeometryOverlayStatus::ReadFailed:
+              ++impl_->metrics.failed_frames;
+              impl_->metrics.last_error = shared->error;
+              impl_->terminal_attempted_fields[frame] = fields;
+              if (existing != impl_->cache.end() &&
+                  existing->second->status ==
+                      crimson::zarr::EyeGeometryOverlayStatus::Mapped) {
+                impl_->condition.notify_all();
+                return status;
+              }
+              break;
+          }
+          if (shared->status == crimson::zarr::EyeGeometryOverlayStatus::Mapped)
+            impl_->terminal_attempted_fields.erase(frame);
+          impl_->publishLocked(frame, std::move(shared));
+          impl_->condition.notify_all();
+          return status;
+        });
+    if (speculative_frames.find(frame) == speculative_frames.end() &&
+        !outcome.accepted()) {
+      assignError(error, "Eye scheduler rejected a demanded frame");
+      return false;
+    }
+  }
+  impl_->metrics.peak_pending_frames = std::max(
+      impl_->metrics.peak_pending_frames,
+      impl_->scheduler->metrics().queue.pending_requests);
   return true;
 }
 

@@ -524,6 +524,7 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         src/zarr/tensorstore_bound_keypoint_overlay_repository.cpp
         src/zarr/tensorstore_bound_subject_shape_overlay_repository.cpp
         src/zarr/tensorstore_bound_eye_geometry_overlay_repository.cpp
+        src/zarr/shared_mask_frame_index.cpp
         src/zarr/refined_detection_contract.cpp
         src/zarr/subject_mask_bundle_v2_contract.cpp
         src/zarr/subject_mask_sampled_contour_v1_contract.cpp
@@ -718,7 +719,7 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         TIMEOUT 30
     )
 
-    foreach(_overlay_target canonical_overlay_selection_tests canonical_overlay_selection_probe bound_keypoint_overlay_repository_tests)
+    foreach(_overlay_target canonical_overlay_selection_tests canonical_overlay_selection_probe bound_keypoint_overlay_repository_tests shared_mask_frame_index_tests)
         add_executable(${_overlay_target} tools/${_overlay_target}.cpp)
         target_compile_features(${_overlay_target} PRIVATE cxx_std_17)
         target_link_libraries(${_overlay_target} PRIVATE
@@ -727,6 +728,35 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         set_target_properties(${_overlay_target} PROPERTIES
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
     endforeach()
+    add_test(NAME shared_mask_frame_index_tests
+        COMMAND $<TARGET_FILE:shared_mask_frame_index_tests>)
+    set_tests_properties(shared_mask_frame_index_tests PROPERTIES
+        LABELS "headless;repository;overlay;selection" TIMEOUT 30)
+
+    add_executable(canonical_eye_demand_tests
+        tools/canonical_eye_demand_tests.cpp
+        src/gui/eye_geometry_overlay_inspect_adapter.cpp)
+    target_compile_features(canonical_eye_demand_tests PRIVATE cxx_std_17)
+    target_link_libraries(canonical_eye_demand_tests PRIVATE
+        crimson_repository_contracts crimson_overlay_contracts)
+    set_target_properties(canonical_eye_demand_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME canonical_eye_demand_tests
+        COMMAND $<TARGET_FILE:canonical_eye_demand_tests>)
+    set_tests_properties(canonical_eye_demand_tests PROPERTIES
+        LABELS "headless;overlay;eye-geometry" TIMEOUT 10)
+
+    add_executable(eye_geometry_demand_buffer_tests
+        tools/eye_geometry_demand_buffer_tests.cpp)
+    target_compile_features(eye_geometry_demand_buffer_tests PRIVATE cxx_std_17)
+    target_link_libraries(eye_geometry_demand_buffer_tests PRIVATE
+        crimson_repository_contracts Threads::Threads)
+    set_target_properties(eye_geometry_demand_buffer_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME eye_geometry_demand_buffer_tests
+        COMMAND $<TARGET_FILE:eye_geometry_demand_buffer_tests>)
+    set_tests_properties(eye_geometry_demand_buffer_tests PROPERTIES
+        LABELS "headless;repository;eye-geometry" TIMEOUT 30)
     add_test(NAME canonical_overlay_selection_tests
         COMMAND $<TARGET_FILE:canonical_overlay_selection_tests>)
     set_tests_properties(canonical_overlay_selection_tests PROPERTIES
@@ -3216,6 +3246,7 @@ list(REMOVE_ITEM CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_bound_keypoint_overlay_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_bound_subject_shape_overlay_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_bound_eye_geometry_overlay_repository.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/shared_mask_frame_index.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_stimulus_context_timeline_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_swim_bout_timeline_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_stimulus_repository.cpp"

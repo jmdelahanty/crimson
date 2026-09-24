@@ -63,6 +63,7 @@ struct SubjectMaskOverlayRepositoryMetrics {
   uint64_t frame_index_rows_read = 0;
   uint64_t frame_index_source_bytes = 0;
   uint64_t frame_index_retained_bytes = 0;
+  uint64_t frame_index_borrowed_bytes = 0;
   uint64_t fallback_frame_index_builds = 0;
   uint64_t fallback_frame_index_rows = 0;
   uint64_t mapping_page_reads = 0;

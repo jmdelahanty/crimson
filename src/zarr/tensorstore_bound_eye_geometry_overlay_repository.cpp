@@ -2,15 +2,20 @@
 
 #include "zarr/archive_context_internal.h"
 #include "zarr/canonical_json.h"
+#include "zarr/shared_mask_frame_index.h"
 
 #include <tensorstore/index_space/dim_expression.h>
+#include <tensorstore/batch.h>
 #include <tensorstore/open.h>
 #include <tensorstore/tensorstore.h>
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <deque>
+#include <functional>
+#include <iterator>
 #include <limits>
 #include <mutex>
 #include <optional>
@@ -68,25 +73,8 @@ bool shape(const ts::TensorStore<T, R> &store,
   return true;
 }
 
-template <typename T, ts::DimensionIndex R>
-bool read(const ts::TensorStore<T, R> &store, size_t first, size_t last,
-          std::vector<T> *out, std::string *e, size_t column = SIZE_MAX) {
-  if (first > last || last > static_cast<size_t>(store.domain().shape()[0]) ||
-      (column != SIZE_MAX && (R < 2 ||
-       column >= static_cast<size_t>(store.domain().shape()[1])))) {
-    error(e, "Bound eye row/column range is invalid"); return false;
-  }
-  if (first == last) { out->clear(); return true; }
-  ts::Box<R> box(store.domain().box());
-  box.origin()[0] = static_cast<ts::Index>(first);
-  box.shape()[0] = static_cast<ts::Index>(last - first);
-  if constexpr (R >= 2) {
-    if (column != SIZE_MAX) {
-      box.origin()[1] = static_cast<ts::Index>(column);
-      box.shape()[1] = 1;
-    }
-  }
-  auto result = ts::Read(store | ts::IdentityTransform(box)).result();
+template <typename T, ts::DimensionIndex R, typename Result>
+bool copyReadResult(const Result &result, std::vector<T> *out, std::string *e) {
   if (!result.ok() || result->rank() != R ||
       result->byte_strides().size() != R) {
     error(e, result.ok() ? "Bound eye read shape mismatch"
@@ -113,15 +101,174 @@ bool read(const ts::TensorStore<T, R> &store, size_t first, size_t last,
 }
 
 template <typename T, ts::DimensionIndex R>
+std::optional<ts::Box<R>> readBox(const ts::TensorStore<T, R> &store,
+                                  size_t first, size_t last,
+                                  size_t column, std::string *e) {
+  if (first > last || last > static_cast<size_t>(store.domain().shape()[0]) ||
+      (column != SIZE_MAX && (R < 2 ||
+       column >= static_cast<size_t>(store.domain().shape()[1])))) {
+    error(e, "Bound eye row/column range is invalid"); return {};
+  }
+  ts::Box<R> box(store.domain().box());
+  box.origin()[0] = static_cast<ts::Index>(first);
+  box.shape()[0] = static_cast<ts::Index>(last - first);
+  if constexpr (R >= 2) {
+    if (column != SIZE_MAX) {
+      box.origin()[1] = static_cast<ts::Index>(column);
+      box.shape()[1] = 1;
+    }
+  }
+  return box;
+}
+
+template <typename T, ts::DimensionIndex R>
+bool read(const ts::TensorStore<T, R> &store, size_t first, size_t last,
+          std::vector<T> *out, std::string *e, size_t column = SIZE_MAX,
+          uint64_t *future_wait_ns = nullptr) {
+  auto box = readBox(store, first, last, column, e);
+  if (!box) return false;
+  if (first == last) { out->clear(); return true; }
+  const auto began = std::chrono::steady_clock::now();
+  auto result = ts::Read(store | ts::IdentityTransform(*box)).result();
+  if (future_wait_ns)
+    *future_wait_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now() - began).count();
+  return copyReadResult<T, R>(result, out, e);
+}
+
+template <typename T, ts::DimensionIndex R>
 bool readCount(const ts::TensorStore<T, R> &store, size_t first, size_t last,
                std::vector<T> *out, std::string *e,
                EyeGeometryOverlayRepository::AccessMetrics *m,
-               size_t column = SIZE_MAX) {
+               std::string_view array, size_t column = SIZE_MAX) {
+  auto it = std::find_if(m->per_array.begin(), m->per_array.end(),
+      [array](const auto &entry) { return entry.array == array; });
+  if (it == m->per_array.end()) {
+    m->per_array.push_back({std::string(array)});
+    it = std::prev(m->per_array.end());
+  }
   ++m->payload_read_calls;
-  if (!read(store, first, last, out, e, column)) return false;
-  m->logical_payload_bytes_read += out->size() * sizeof(T);
+  ++it->calls;
+  uint64_t waited = 0;
+  const bool ok = read(store, first, last, out, e, column, &waited);
+  ++it->future_elapsed_count;
+  it->future_elapsed_ns_sum += waited;
+  it->future_elapsed_ns_max = std::max(it->future_elapsed_ns_max, waited);
+  if (!ok) { ++it->failures; return false; }
+  const uint64_t bytes = out->size() * sizeof(T);
+  m->logical_payload_bytes_read += bytes;
+  it->logical_bytes += bytes;
   return true;
 }
+
+void addReadMetrics(EyeGeometryOverlayRepository::AccessMetrics *total,
+                    const EyeGeometryOverlayRepository::AccessMetrics &delta) {
+  total->payload_read_calls += delta.payload_read_calls;
+  total->logical_payload_bytes_read += delta.logical_payload_bytes_read;
+  total->peak_inflight_payload_reads = std::max(
+      total->peak_inflight_payload_reads, delta.peak_inflight_payload_reads);
+  for (const auto &source : delta.per_array) {
+    auto it = std::find_if(total->per_array.begin(), total->per_array.end(),
+        [&](const auto &entry) { return entry.array == source.array; });
+    if (it == total->per_array.end()) {
+      total->per_array.push_back(source);
+      continue;
+    }
+    it->calls += source.calls;
+    it->logical_bytes += source.logical_bytes;
+    it->failures += source.failures;
+    it->future_elapsed_count += source.future_elapsed_count;
+    it->future_elapsed_ns_sum += source.future_elapsed_ns_sum;
+    it->future_elapsed_ns_max = std::max(it->future_elapsed_ns_max,
+                                          source.future_elapsed_ns_max);
+  }
+}
+
+// A batch is submitted before any member is waited on. Releasing every future
+// is mandatory, including on an error or stale-generation cancellation.
+class ReadWave {
+public:
+  ReadWave(EyeGeometryOverlayRepository::AccessMetrics *metrics,
+           std::string *error_message,
+           const std::function<bool()> &cancelled,
+           size_t max_inflight = 4)
+      : metrics_(metrics), error_message_(error_message),
+        cancelled_(cancelled), max_inflight_(max_inflight),
+        batch_(ts::Batch::New()) {}
+
+  ~ReadWave() { if (!waiters_.empty()) flush(); }
+
+  template <typename T, ts::DimensionIndex R>
+  bool add(const ts::TensorStore<T, R> &store, size_t first, size_t last,
+           std::vector<T> *out, std::string_view array,
+           size_t column = SIZE_MAX) {
+    if (waiters_.size() >= max_inflight_) {
+      if (!flush()) return false;
+      if (cancelled_ && cancelled_()) {
+        error(error_message_, "Bound eye request cancelled between read waves");
+        return false;
+      }
+    }
+    auto box = readBox(store, first, last, column, error_message_);
+    if (!box) return false;
+    if (first == last) { out->clear(); return true; }
+    const std::string name(array);
+    const auto began = std::chrono::steady_clock::now();
+    auto future = ts::Read(store | ts::IdentityTransform(*box), batch_);
+    waiters_.emplace_back([this, out, name, began,
+                           future = std::move(future)]() mutable {
+      auto result = future.result();
+      const auto waited = static_cast<uint64_t>(
+          std::chrono::duration_cast<std::chrono::nanoseconds>(
+              std::chrono::steady_clock::now() - began).count());
+      auto it = std::find_if(metrics_->per_array.begin(),
+          metrics_->per_array.end(), [&](const auto &entry) {
+            return entry.array == name;
+          });
+      if (it == metrics_->per_array.end()) {
+        metrics_->per_array.push_back({name});
+        it = std::prev(metrics_->per_array.end());
+      }
+      ++metrics_->payload_read_calls;
+      ++it->calls;
+      ++it->future_elapsed_count;
+      it->future_elapsed_ns_sum += waited;
+      it->future_elapsed_ns_max = std::max(it->future_elapsed_ns_max, waited);
+      if (!copyReadResult<T, R>(result, out, error_message_)) {
+        ++it->failures;
+        return false;
+      }
+      const uint64_t bytes = out->size() * sizeof(T);
+      metrics_->logical_payload_bytes_read += bytes;
+      it->logical_bytes += bytes;
+      return true;
+    });
+    metrics_->peak_inflight_payload_reads = std::max<uint64_t>(
+        metrics_->peak_inflight_payload_reads, waiters_.size());
+    return true;
+  }
+
+  bool flush() {
+    batch_.Release();
+    bool ok = true;
+    for (auto &waiter : waiters_) {
+      // Even after a failure, drain all futures to keep the wave within its
+      // concurrency and decoded-working-set admission.
+      if (!waiter()) ok = false;
+    }
+    waiters_.clear();
+    batch_ = ts::Batch::New();
+    return ok;
+  }
+
+private:
+  EyeGeometryOverlayRepository::AccessMetrics *metrics_;
+  std::string *error_message_;
+  const std::function<bool()> &cancelled_;
+  size_t max_inflight_;
+  ts::Batch batch_;
+  std::vector<std::function<bool()>> waiters_;
+};
 
 std::vector<std::string> names(const ArchiveContext::Impl &archive,
                                const std::string &path, size_t expected,
@@ -274,16 +421,26 @@ public:
              std::vector<int64_t> offsets, Sources sources,
              BoundEyeGeometryOverlayOpenRequest limits)
       : descriptor_(std::move(descriptor)), offsets_(std::move(offsets)),
-        sources_(std::move(sources)), limits_(std::move(limits)) {
+        sources_(std::move(sources)), limits_(std::move(limits)),
+        shared_index_(limits_.shared_mask_frame_index) {
     limits_.archive.reset();
+    limits_.shared_mask_frame_index.reset();
   }
 
   const EyeGeometryOverlayDescriptor &descriptor() const override { return descriptor_; }
 
   EyeGeometryOverlayResolution resolveCameraFrame(int64_t frame, int width,
                                                    int height) const override {
+    return resolveCameraFrameFields(frame, width, height, EyeGeometryFields::All);
+  }
+
+  EyeGeometryOverlayResolution resolveCameraFrameFields(
+      int64_t frame, int width, int height, EyeGeometryFieldMask requested,
+      const std::function<bool()> &cancelled = {}) const override {
+    EyeGeometryFieldMask fields = NormalizeEyeGeometryFields(requested);
     EyeGeometryOverlayResolution result;
     result.camera_frame = frame;
+    result.loaded_fields = 0;
     if (frame < 0 || static_cast<uint64_t>(frame) >= descriptor_.camera_frame_count) {
       result.status = EyeGeometryOverlayStatus::OutOfRange; return result;
     }
@@ -295,11 +452,38 @@ public:
     {
       std::lock_guard<std::mutex> lock(mutex_);
       for (const auto &entry : cache_) if (entry.first == frame) {
-        ++access_.cache_hits; return entry.second;
+        if ((entry.second.loaded_fields & fields) == fields) {
+          ++access_.cache_hits; return entry.second;
+        }
+        fields |= entry.second.loaded_fields;
       }
     }
-    const size_t first = static_cast<size_t>(offsets_[frame]);
-    const size_t last = static_cast<size_t>(offsets_[frame + 1]);
+    if (cancelled && cancelled()) {
+      result.status = EyeGeometryOverlayStatus::ReadFailed;
+      result.error = "Bound eye request cancelled";
+      return result;
+    }
+    // A stale request must release all of its TensorStore futures before a
+    // successor begins. This gate bounds aggregate in-flight work even when
+    // different scheduler generations call the same repository concurrently.
+    std::unique_lock<std::mutex> read_guard(read_mutex_);
+    if (cancelled && cancelled()) {
+      result.status = EyeGeometryOverlayStatus::ReadFailed;
+      result.error = "Bound eye request cancelled";
+      return result;
+    }
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      for (const auto &entry : cache_) if (entry.first == frame) {
+        if ((entry.second.loaded_fields & fields) == fields) {
+          ++access_.cache_hits; return entry.second;
+        }
+        fields |= entry.second.loaded_fields;
+      }
+    }
+    const auto &offsets = shared_index_ ? shared_index_->offsets() : offsets_;
+    const size_t first = static_cast<size_t>(offsets[frame]);
+    const size_t last = static_cast<size_t>(offsets[frame + 1]);
     const size_t n = last - first;
     if (!n) { result.status = EyeGeometryOverlayStatus::Missing; return result; }
     // Admission counts requested payloads. TensorStore may decode larger inner
@@ -313,8 +497,7 @@ public:
     AccessMetrics counts;
     auto fail = [&](std::string message) {
       std::lock_guard<std::mutex> lock(mutex_);
-      access_.payload_read_calls += counts.payload_read_calls;
-      access_.logical_payload_bytes_read += counts.logical_payload_bytes_read;
+      addReadMetrics(&access_, counts);
       result.status = EyeGeometryOverlayStatus::ReadFailed;
       result.error = std::move(message);
       result.detections.clear(); return result;
@@ -323,16 +506,19 @@ public:
     std::vector<int64_t> ef, ea, sf, mf, sc, mc;
     std::vector<uint64_t> ek, sk, mk;
     std::vector<float> crops;
-    if (!readCount(sources_.eye_frames, first, last, &ef, &e, &counts) ||
-        !readCount(sources_.eye_acquisition, first, last, &ea, &e, &counts) ||
-        !readCount(sources_.shape_frames, first, last, &sf, &e, &counts) ||
-        !readCount(sources_.mask_frames, first, last, &mf, &e, &counts) ||
-        !readCount(sources_.eye_keys, first, last, &ek, &e, &counts) ||
-        !readCount(sources_.shape_keys, first, last, &sk, &e, &counts) ||
-        !readCount(sources_.mask_keys, first, last, &mk, &e, &counts) ||
-        !readCount(sources_.shape_crop_rows, first, last, &sc, &e, &counts) ||
-        !readCount(sources_.mask_crop_rows, first, last, &mc, &e, &counts) ||
-        !readCount(sources_.crop, first, last, &crops, &e, &counts))
+    ReadWave identity(&counts, &e, cancelled);
+    const bool identity_queued =
+        identity.add(sources_.eye_frames, first, last, &ef, "E/support/frame_indices") &&
+        identity.add(sources_.eye_acquisition, first, last, &ea, "E/support/source_acquisition_frame_index") &&
+        identity.add(sources_.shape_frames, first, last, &sf, "S/source_acquisition_frame_index") &&
+        identity.add(sources_.mask_frames, first, last, &mf, "M/source_acquisition_frame_index") &&
+        identity.add(sources_.eye_keys, first, last, &ek, "E/support/instance_key") &&
+        identity.add(sources_.shape_keys, first, last, &sk, "S/instance_key") &&
+        identity.add(sources_.mask_keys, first, last, &mk, "M/instance_key") &&
+        identity.add(sources_.shape_crop_rows, first, last, &sc, "S/source_crop_row_ids") &&
+        identity.add(sources_.mask_crop_rows, first, last, &mc, "M/source_crop_row_ids") &&
+        identity.add(sources_.crop, first, last, &crops, "M/source_crop_xywh");
+    if (!identity.flush() || !identity_queued)
       return fail("Bound eye row identity read failed: " + e);
     std::unordered_set<uint64_t> seen;
     for (size_t i = 0; i < n; ++i) {
@@ -347,6 +533,7 @@ public:
         return fail("Bound eye row identity or crop disagrees at row " +
                     std::to_string(first + i));
     }
+    if (cancelled && cancelled()) return fail("Bound eye request cancelled");
     std::array<std::vector<float>, 2> ellipse;
     std::array<std::vector<bool>, 2> success;
     std::vector<bool> body_valid;
@@ -354,30 +541,75 @@ public:
     std::array<std::vector<float>, 5> angles;
     std::array<std::vector<float>, 2> gaze;
     std::array<std::vector<uint16_t>, 3> qa;
-    for (size_t eye = 0; eye < 2; ++eye) {
-      if (!readCount(sources_.ellipse[eye], first, last, &ellipse[eye], &e, &counts) ||
-          !readCount(sources_.ellipse_success[eye], first, last,
-                     &success[eye], &e, &counts) ||
-          !readCount(sources_.angles, first, last, &angles[eye], &e, &counts,
-                     sources_.eye_angle[eye]) ||
-          !readCount(sources_.angles, first, last, &angles[2 + eye], &e, &counts,
-                     sources_.gaze_angle[eye]) ||
-          !readCount(sources_.vectors, first, last, &gaze[eye], &e, &counts,
-                     sources_.gaze_vector[eye]) ||
-          !readCount(sources_.qa, first, last, &qa[1 + eye], &e, &counts,
-                     sources_.valid_eye[eye]))
-        return fail("Bound eye geometry read failed: " + e);
+    const bool need_body = (fields & EyeGeometryFields::BodyFrame) != 0;
+    ReadWave payload(&counts, &e, cancelled);
+    if (!payload.add(sources_.qa, first, last, &qa[0],
+                     "E/roi_qa", sources_.valid_frame)) {
+      payload.flush();
+      return fail("Bound eye frame QA read failed: " + e);
     }
-    if (!readCount(sources_.body_valid, first, last, &body_valid, &e, &counts) ||
-        !readCount(sources_.qa, first, last, &qa[0], &e, &counts,
-                   sources_.valid_frame) ||
-        !readCount(sources_.angles, first, last, &angles[4], &e, &counts,
-                   sources_.vergence))
-      return fail("Bound eye validity read failed: " + e);
-    for (size_t axis_index = 0; axis_index < 3; ++axis_index)
-      if (!readCount(sources_.body[axis_index], first, last, &body[axis_index],
-                     &e, &counts))
-        return fail("Bound eye body-frame read failed: " + e);
+    for (size_t eye = 0; eye < 2; ++eye) {
+      const EyeGeometryFieldMask geometry = eye ? EyeGeometryFields::RightGeometry : EyeGeometryFields::LeftGeometry;
+      const EyeGeometryFieldMask gaze_field = eye ? EyeGeometryFields::RightGaze : EyeGeometryFields::LeftGaze;
+      const EyeGeometryFieldMask signed_field = eye ? EyeGeometryFields::RightSigned : EyeGeometryFields::LeftSigned;
+      const EyeGeometryFieldMask angle_field = eye ? EyeGeometryFields::RightAngle : EyeGeometryFields::LeftAngle;
+      if (!(fields & geometry)) continue;
+      if (!payload.add(sources_.ellipse[eye], first, last, &ellipse[eye],
+                     eye ? "S/components/eye_right/ellipse_params" : "S/components/eye_left/ellipse_params") ||
+          !payload.add(sources_.ellipse_success[eye], first, last,
+                     &success[eye],
+                     eye ? "S/components/eye_right/ellipse_success" : "S/components/eye_left/ellipse_success") ||
+          !payload.add(sources_.qa, first, last, &qa[1 + eye],
+                     "E/roi_qa", sources_.valid_eye[eye]))
+      {
+        payload.flush();
+        return fail("Bound eye geometry read failed: " + e);
+      }
+      if ((fields & angle_field) &&
+          !payload.add(sources_.angles, first, last, &angles[eye],
+                     "E/roi_angles", sources_.eye_angle[eye]))
+      {
+        payload.flush();
+        return fail("Bound eye angle read failed: " + e);
+      }
+      if ((fields & signed_field) &&
+          !payload.add(sources_.angles, first, last, &angles[2 + eye],
+                     "E/roi_angles", sources_.gaze_angle[eye]))
+      {
+        payload.flush();
+        return fail("Bound eye signed angle read failed: " + e);
+      }
+      if ((fields & gaze_field) &&
+          !payload.add(sources_.vectors, first, last, &gaze[eye],
+                     "E/roi_vectors", sources_.gaze_vector[eye]))
+      {
+        payload.flush();
+        return fail("Bound eye gaze read failed: " + e);
+      }
+    }
+    if (need_body) {
+      if (!payload.add(sources_.body_valid, first, last, &body_valid,
+                       "E/support/body_frame/valid")) {
+        payload.flush();
+        return fail("Bound eye body-frame validity read failed: " + e);
+      }
+      for (size_t axis_index = 0; axis_index < 3; ++axis_index)
+        if (!payload.add(sources_.body[axis_index], first, last, &body[axis_index],
+                       axis_index == 0 ? "E/support/body_frame/origin_xy" :
+                       axis_index == 1 ? "E/support/body_frame/forward_axis_xy" :
+                                         "E/support/body_frame/left_axis_xy")) {
+          payload.flush();
+          return fail("Bound eye body-frame read failed: " + e);
+        }
+    }
+    if ((fields & EyeGeometryFields::Vergence) &&
+        !payload.add(sources_.angles, first, last, &angles[4],
+                     "E/roi_angles", sources_.vergence)) {
+      payload.flush();
+      return fail("Bound eye vergence read failed: " + e);
+    }
+    if (!payload.flush()) return fail("Bound eye payload read failed: " + e);
+    if (cancelled && cancelled()) return fail("Bound eye request cancelled");
     result.detections.reserve(n);
     for (size_t i = 0; i < n; ++i) {
       EyeGeometryOverlayDetection d;
@@ -389,7 +621,7 @@ public:
       d.roi_x = crops[4*i]; d.roi_y = crops[4*i+1];
       d.roi_width = crops[4*i+2]; d.roi_height = crops[4*i+3];
       d.frame_valid = qa[0][i] != 0;
-      d.body_frame_valid = d.frame_valid && body_valid[i] &&
+      d.body_frame_valid = need_body && d.frame_valid && body_valid[i] &&
           std::isfinite(body[0][2*i]) && std::isfinite(body[0][2*i+1]) &&
           std::isfinite(body[1][2*i]) && std::isfinite(body[1][2*i+1]) &&
           std::isfinite(body[2][2*i]) && std::isfinite(body[2][2*i+1]);
@@ -399,6 +631,11 @@ public:
         d.body_left_axis = {body[2][2*i], body[2][2*i+1]};
       }
       for (size_t eye = 0; eye < 2; ++eye) {
+        const EyeGeometryFieldMask geometry = eye ? EyeGeometryFields::RightGeometry : EyeGeometryFields::LeftGeometry;
+        const EyeGeometryFieldMask gaze_field = eye ? EyeGeometryFields::RightGaze : EyeGeometryFields::LeftGaze;
+        const EyeGeometryFieldMask signed_field = eye ? EyeGeometryFields::RightSigned : EyeGeometryFields::LeftSigned;
+        const EyeGeometryFieldMask angle_field = eye ? EyeGeometryFields::RightAngle : EyeGeometryFields::LeftAngle;
+        if (!(fields & geometry)) continue;
         auto &target = d.eyes[eye];
         const float *params = ellipse[eye].data() + 5*i;
         target.valid = d.frame_valid && qa[1+eye][i] && success[eye][i] &&
@@ -410,36 +647,44 @@ public:
           target.minor_axis = axis(params, false, d.roi_x, d.roi_y);
           target.valid = target.major_axis.valid && target.minor_axis.valid;
         }
-        if (target.valid && d.body_frame_valid &&
+        if ((fields & gaze_field) && target.valid && d.body_frame_valid &&
             std::isfinite(gaze[eye][2*i]) && std::isfinite(gaze[eye][2*i+1]) &&
             std::hypot(gaze[eye][2*i], gaze[eye][2*i+1]) > 1e-6) {
           target.gaze = {gaze[eye][2*i], gaze[eye][2*i+1]};
           target.gaze_valid = true;
         }
-        if (target.valid && d.body_frame_valid &&
+        if ((fields & signed_field) && target.valid && d.body_frame_valid &&
             std::isfinite(angles[2+eye][i])) {
           target.signed_angle_valid = true;
           target.signed_angle_degrees = angles[2+eye][i];
         }
-        if (target.valid && d.body_frame_valid && std::isfinite(angles[eye][i])) {
+        if ((fields & angle_field) && target.valid && d.body_frame_valid &&
+            std::isfinite(angles[eye][i])) {
           target.eye_frame_angle_valid = true;
           target.eye_frame_angle_degrees = angles[eye][i];
         }
       }
-      if (d.body_frame_valid && d.eyes[0].valid && d.eyes[1].valid &&
+      if ((fields & EyeGeometryFields::Vergence) && d.body_frame_valid &&
+          d.eyes[0].valid && d.eyes[1].valid &&
           std::isfinite(angles[4][i])) {
         d.vergence_valid = true; d.vergence_degrees = angles[4][i];
       }
       result.detections.push_back(std::move(d));
     }
     result.status = EyeGeometryOverlayStatus::Mapped;
+    result.loaded_fields = fields;
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      access_.payload_read_calls += counts.payload_read_calls;
-      access_.logical_payload_bytes_read += counts.logical_payload_bytes_read;
+      addReadMetrics(&access_, counts);
       const uint64_t bytes = sizeof(EyeGeometryOverlayResolution) +
           result.detections.capacity() * sizeof(EyeGeometryOverlayDetection);
       if (bytes <= limits_.max_cached_decoded_bytes) {
+        for (auto it = cache_.begin(); it != cache_.end();) {
+          if (it->first != frame) { ++it; continue; }
+          cache_bytes_ -= sizeof(EyeGeometryOverlayResolution) +
+              it->second.detections.capacity() * sizeof(EyeGeometryOverlayDetection);
+          it = cache_.erase(it);
+        }
         while (!cache_.empty() &&
                (cache_bytes_ + bytes > limits_.max_cached_decoded_bytes ||
                 cache_.size() >= 64)) {
@@ -473,7 +718,9 @@ private:
   std::vector<int64_t> offsets_;
   Sources sources_;
   BoundEyeGeometryOverlayOpenRequest limits_;
+  std::shared_ptr<const SharedMaskFrameIndex> shared_index_;
   mutable std::mutex mutex_;
+  mutable std::mutex read_mutex_;
   mutable std::deque<std::pair<int64_t, EyeGeometryOverlayResolution>> cache_;
   mutable uint64_t cache_bytes_ = 0;
   mutable AccessMetrics access_;
@@ -763,15 +1010,28 @@ OpenBoundEyeGeometryOverlayRepository(
       error(message, "Bound eye body-frame shape disagrees with selection"); return nullptr;
     }
   std::vector<int64_t> offsets;
-  if (!read(a.offsets, 0, s.frame_count + 1, &offsets, message)) return nullptr;
-  ++m.offset_read_calls;
-  m.retained_offset_bytes = offsets.capacity() * sizeof(int64_t);
-  if (offsets.front() != 0 || offsets.back() != static_cast<int64_t>(n) ||
-      !std::is_sorted(offsets.begin(), offsets.end())) {
+  if (request.shared_mask_frame_index) {
+    if (!request.shared_mask_frame_index->matches(request.archive, s) ||
+        !request.shared_mask_frame_index->admits(request.max_observations_per_frame)) {
+      error(message, "Bound eye shared frame index disagrees with source or observation limit");
+      return nullptr;
+    }
+    m.reused_shared_mask_index = true;
+  } else {
+    if (!read(a.offsets, 0, s.frame_count + 1, &offsets, message)) return nullptr;
+    ++m.offset_read_calls;
+    m.retained_offset_bytes = offsets.capacity() * sizeof(int64_t);
+  }
+  const auto &validated_offsets = request.shared_mask_frame_index ?
+      request.shared_mask_frame_index->offsets() : offsets;
+  if (validated_offsets.size() != s.frame_count + 1 ||
+      validated_offsets.front() != 0 ||
+      validated_offsets.back() != static_cast<int64_t>(n) ||
+      !std::is_sorted(validated_offsets.begin(), validated_offsets.end())) {
     error(message, "Bound eye frame offsets are invalid"); return nullptr;
   }
   for (size_t frame = 0; frame < s.frame_count; ++frame) {
-    const auto count = offsets[frame + 1] - offsets[frame];
+    const auto count = validated_offsets[frame + 1] - validated_offsets[frame];
     if (count < 0 || static_cast<size_t>(count) > request.max_observations_per_frame) {
       error(message, "Bound eye frame observation limit exceeded"); return nullptr;
     }

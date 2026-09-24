@@ -107,7 +107,12 @@ class CanonicalOverlaySession {
   bool requestFrame(int64_t frame, bool keypoints, bool masks, bool shapes,
                     bool discontinuity = false,
                     CanonicalOverlayPlaybackDemand playback = {},
-                    bool mask_contours = false, bool eyes = false);
+                    bool mask_contours = false, bool eyes = false,
+                    bool manage_eyes = true);
+  // Submit the combined camera/inspector demand once per UI tick. When using
+  // this interface, requestFrame(..., manage_eyes=false) leaves eyes untouched.
+  bool requestEyeFrames(const std::vector<EyeGeometryFrameDemand>& demands,
+                        bool discontinuity = false);
   CanonicalOverlaySnapshot snapshot(int64_t frame) const;
   bool waitUntilOpen(std::chrono::milliseconds timeout) const;
 

@@ -243,7 +243,8 @@ bool CanonicalOverlaySession::requestFrame(int64_t frame, bool keypoints,
                                           bool masks, bool shapes,
                                           bool discontinuity,
                                           CanonicalOverlayPlaybackDemand playback,
-                                          bool mask_contours, bool eyes) {
+                                          bool mask_contours, bool eyes,
+                                          bool manage_eyes) {
   std::shared_ptr<Impl::Epoch> epoch;
   {
     std::lock_guard<std::mutex> lock(impl_->mutex);
@@ -283,7 +284,7 @@ bool CanonicalOverlaySession::requestFrame(int64_t frame, bool keypoints,
   }
   if (shapes && epoch->shapes)
     accepted = epoch->shapes->requestFrame(frame, width, height, discontinuity) && accepted;
-  if (epoch->eyes) {
+  if (epoch->eyes && manage_eyes) {
     if (eyes)
       accepted = epoch->eyes->requestFrame(frame, width, height,
                                            discontinuity) && accepted;
@@ -291,6 +292,23 @@ bool CanonicalOverlaySession::requestFrame(int64_t frame, bool keypoints,
       epoch->eyes->suspend();
   }
   return accepted;
+}
+bool CanonicalOverlaySession::requestEyeFrames(
+    const std::vector<EyeGeometryFrameDemand>& demands, bool discontinuity) {
+  std::shared_ptr<Impl::Epoch> epoch;
+  {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    if (impl_->state != CanonicalOverlayState::Ready) return false;
+    epoch = impl_->active;
+  }
+  if (!epoch || !epoch->eyes) return false;
+  for (const auto& demand : demands) {
+    if (demand.frame < 0 ||
+        static_cast<uint64_t>(demand.frame) >= epoch->request.frame_count)
+      return false;
+  }
+  return epoch->eyes->requestFrames(demands, epoch->request.source_width,
+                                    epoch->request.source_height, discontinuity);
 }
 CanonicalOverlaySnapshot CanonicalOverlaySession::snapshot(int64_t frame) const {
   CanonicalOverlaySnapshot result;

@@ -2,17 +2,19 @@
 
 Scope: the new canonical eye-overlay reader, not the complete Crimson session.
 Video, detections, dense masks, contours, keypoints, shapes and timeline plots
-have separate readers and are not counted below. No loading behavior was changed
-while preparing this inventory.
+have separate readers and are not counted below. The original inventory described
+the full-read baseline; the follow-on read-planning integration is noted below.
 
 ## Counts and when reads occur
 
-- **21 distinct per-observation payload arrays** supply a mapped frame.
-- **28 logical TensorStore reads** resolve an uncached, nonempty valid frame:
+- **21 distinct per-observation payload arrays** supply a full-feature mapped frame.
+- **28 logical TensorStore reads** resolve an uncached, nonempty valid full-feature frame:
   `roi_angles` is read five times, `roi_vectors` twice and `roi_qa` three times,
   each for a selected channel. Other payload arrays are read once.
 - **7 additional arrays** are read at repository open: six channel-index tables
-  and the frame-row-offset index. Thus there are **28 distinct arrays total**,
+  and the frame-row-offset index. The canonical session now shares that index
+  with masks/contours and shape; independent legacy opens retain their own path.
+  Thus there are **28 distinct arrays total**,
   coincidentally the same number as the per-frame logical read-call count.
 - Frame cache hits return the assembled result without those payload reads.
   Missing frames use the retained offsets and return without payload reads.
@@ -20,8 +22,12 @@ while preparing this inventory.
   individual observation. Failures may stop the read sequence early.
 - Turning off the master eye-overlay demand stops new per-frame eye requests.
   Repository metadata/index opening still occurs asynchronously at session open.
-  Turning off individual labels/arcs/cones currently affects drawing, **not**
-  the payload field selection; both eyes are still loaded.
+  Individual eye/features now determine payload field selection. The active
+  Eye Angles inspector adds its selected representation; same-frame demands are
+  unioned, while different inspector/camera frames remain independent consumers.
+  Labels retain the signed-angle fallback dependency; cones need gaze even if
+  gaze rays are hidden. Measured gaze/angles still require complete body-frame
+  validity, including finite origin/forward/left values.
 - Logical reads, distinct arrays, decoded chunks, filesystem reads and NFS
   network operations are different counts. These numbers are not NFS requests.
 
@@ -95,11 +101,31 @@ supply geometry, measurements, validity or crop placement. Cones, overlap
 polygons and label positions are constructed in the shared scene code; no
 additional cone or overlap arrays are loaded.
 
-Potential read-plan reductions, **not implemented by this inventory**:
+## Read-planning integration status
+
+Implemented: feature-specific fields, explicit loaded coverage, bounded waves of
+up to four TensorStore futures, cancellation between waves, and one immutable
+mask frame-offset vector shared by the canonical mask/contour/shape/eye readers.
+An axes-only camera plan for both eyes uses 17 logical calls rather than 28 on a
+nonempty uncached frame (15 distinct payload arrays rather than 21). Frame/key/
+crop identity checks remain; axes alone do not consume body-frame measurements.
+
+Richer field upgrades currently reread the union of previously loaded and newly
+requested fields; downgrades can reuse richer cached results. Opening metadata
+and channel tables is still eager/asynchronous. A broader mapping-page cache and
+gathering selected channels into fewer logical requests remain future work.
+
+The four-future limit is a concurrency bound, not a hard process-memory bound:
+a future can decode multiple chunks, and TensorStore shares its cache across
+products. Per-array timings measure dispatch-to-consumption latency (including
+queueing and other waits), not isolated disk time or decode time.
+
+Original opportunities and remaining boundaries:
 
 1. **Identity/mapping reuse:** share already validated pages across bound eye,
    shape, mask and keypoint readers. Preserve exact source/run/frame/key checks
-   rather than deleting them or relying solely on row ordinals.
+   rather than deleting them or relying solely on row ordinals. Only the common
+   immutable frame-offset vector is shared in this integration.
 2. **Feature-specific fields:** an axes-only view does not need angle scalars or
    measured gaze vectors; a view without labels does not need its three label
    scalars unless the inspector requests them. A view without arcs need not

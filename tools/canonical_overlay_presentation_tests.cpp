@@ -321,6 +321,22 @@ bool eyesRequireExactSourceFrameAndKeys() {
   only.masks.frame.reset(); only.masks.state = gui::CanonicalOverlayState::Unavailable;
   only.shapes.frame.reset(); only.shapes.state = gui::CanonicalOverlayState::Unavailable;
   CHECK(!present(only).eyes.primitives.empty());
+  auto partial = makeEyes();
+  auto partial_frame = std::make_shared<zarr::EyeGeometryOverlayResolution>(*partial.eyes.frame);
+  partial_frame->loaded_fields = zarr::EyeGeometryFields::LeftGeometry |
+                                 zarr::EyeGeometryFields::RightGeometry;
+  partial.eyes.frame = partial_frame;
+  // The complete scene may not invent a minor-axis fallback for unloaded gaze.
+  CHECK(present(partial).eyes.primitives.empty());
+  CHECK(present(partial).snapshot.eyes.state == gui::CanonicalOverlayState::Ready);
+  overlay::ReadOnlyOverlayControlState axes;
+  axes.show_eye_direction_beams = axes.show_eye_gaze_rays = false;
+  axes.show_eye_angle_arcs = axes.show_eye_angle_labels = false;
+  const auto axes_only = present(partial, axes);
+  CHECK(!axes_only.eyes.primitives.empty());
+  CHECK(axes_only.eyes.text_annotations.empty());
+  for (const auto& primitive : axes_only.eyes.primitives)
+    CHECK(primitive.type != overlay::PrimitiveType::Polygon);
   return true;
 }
 int main() {

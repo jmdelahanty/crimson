@@ -26,6 +26,7 @@
 #include "gui/canonical_timeline_session.h"
 #include "gui/canonical_overlay_session.h"
 #include "gui/canonical_overlay_presentation.h"
+#include "gui/canonical_eye_demand.h"
 #include "gui/canonical_timeline_window.h"
 #include "gui/crop_preview_window.h"
 #include "gui/diagnostics_window.h"
@@ -1194,15 +1195,16 @@ int main(int argc, char **argv) {
   int canonical_detection_last_requested_frame = -1;
   std::string canonical_detection_last_request_error;
   uint64_t canonical_overlay_seen_seek_requests = 0;
+  uint64_t canonical_eye_seen_seek_requests = 0;
   auto requestCanonicalOverlayFrame = [&](int frame, bool keypoints, bool masks,
-                                          bool shapes, bool mask_contours, bool eyes) {
+                                          bool shapes, bool mask_contours) {
     const uint64_t seek_requests = playback_transport.seekCoordinator().metrics().requests;
     const bool accepted = canonical_overlay_session.requestFrame(
         frame, keypoints, masks, shapes,
         seek_requests != canonical_overlay_seen_seek_requests,
         {true, ps.play_video ? crimson::gui::CanonicalOverlayPlaybackDirection::Forward
                             : crimson::gui::CanonicalOverlayPlaybackDirection::Paused,
-         video_fps, playback_transport.playbackRate()}, mask_contours, eyes);
+         video_fps, playback_transport.playbackRate()}, mask_contours, false, false);
     // A partial product rejection must not repeatedly invalidate products
     // which already accepted this seek. New opens have their own source epoch.
     canonical_overlay_seen_seek_requests = seek_requests;
@@ -2999,6 +3001,9 @@ int main(int argc, char **argv) {
   };
 
   while (!glfwWindowShouldClose(window->render_target)) {
+    // One union per UI tick prevents inspector and camera consumers from
+    // canceling one another or narrowing an in-flight same-frame field request.
+    std::vector<EyeGeometryFrameDemand> canonical_eye_demands;
     if (pending_stimulus_dialog) {
       auto command = std::move(*pending_stimulus_dialog);
       pending_stimulus_dialog.reset();
@@ -3659,7 +3664,7 @@ int main(int argc, char **argv) {
         requestCanonicalOverlayFrame(current_frame_num, true,
             show_eye_masks || inspect_masks || subject_shape_needs_contours,
             subject_shape_overlay_options.show_overlay || show_heading_arrows || inspect_masks,
-            subject_shape_needs_contours, show_canonical_eye_geometry);
+            subject_shape_needs_contours);
         auto presentation = crimson::gui::makeCanonicalOverlayPresentation(
             canonical_overlay_session.snapshot(current_frame_num), 0, current_frame_num,
             static_cast<int>(canonical_detection_expected_width),
@@ -3804,6 +3809,14 @@ int main(int argc, char **argv) {
       show_eye_gaze_rays = frame_debug_result.show_eye_gaze_rays;
       show_eye_angle_arcs = frame_debug_result.show_eye_angle_arcs;
       show_eye_angle_labels = frame_debug_result.show_eye_angle_labels;
+      if (canonical_detection_route && current_frame_num >= 0 &&
+          frame_debug_window_state.active_view ==
+              crimson::workspace::FrameInspectView::EyeAngles) {
+        const auto fields = crimson::gui::canonicalInspectEyeFields(
+            show_canonical_eye_geometry,
+            frame_debug_window_state.eye_angle_inspect.selected_representation_key);
+        if (fields) canonical_eye_demands.push_back({current_frame_num, fields, false});
+      }
       mask_overlay_mode = frame_debug_result.mask_overlay_mode;
       subject_shape_overlay_options =
           frame_debug_result.subject_shape_overlay_options;
@@ -4478,13 +4491,14 @@ int main(int argc, char **argv) {
                       kPlaybackMaskPrefetchLookaheadFrames,
                   });
           crimson::gui::CanonicalOverlayPresentation canonical_presentation;
+          crimson::zarr::EyeGeometryFieldMask camera_eye_requested_fields = 0;
           if (canonical_detection_route && zarr_bbox_query_frame >= 0) {
             requestCanonicalOverlayFrame(zarr_bbox_query_frame,
                 show_keypoint_markers || show_heading_arrows ||
                     camera_subject_shape_needs_contours,
                 show_eye_masks || camera_subject_shape_needs_contours,
                 subject_shape_overlay_options.show_overlay || show_heading_arrows,
-                camera_subject_shape_needs_contours, show_canonical_eye_geometry);
+                camera_subject_shape_needs_contours);
             crimson::overlay::ReadOnlyOverlayControlState controls;
             controls.show_keypoints = show_keypoint_markers;
             controls.show_headings = show_heading_arrows;
@@ -4494,10 +4508,15 @@ int main(int argc, char **argv) {
             controls.show_eye_right_mask = show_eye_right_mask;
             controls.show_swim_bladder_mask = show_swim_bladder_mask;
             controls.show_eye_geometry = show_canonical_eye_geometry;
+            controls.mask_mode = mask_overlay_mode;
             controls.show_eye_direction_beams = show_eye_direction_beams;
             controls.show_eye_gaze_rays = show_eye_gaze_rays;
             controls.show_eye_angle_arcs = show_eye_angle_arcs;
             controls.show_eye_angle_labels = show_eye_angle_labels;
+            const auto eye_fields = crimson::gui::canonicalCameraEyeFields(controls);
+            camera_eye_requested_fields = eye_fields;
+            if (eye_fields && has_presented_camera_frame)
+              canonical_eye_demands.push_back({zarr_bbox_query_frame, eye_fields, true});
             applyCameraViewCanonicalSubjectShapeControls(
                 subject_shape_overlay_options, &controls);
             canonical_presentation = crimson::gui::makeCanonicalOverlayPresentation(
@@ -5052,6 +5071,8 @@ int main(int argc, char **argv) {
                    {"eye_enabled", show_canonical_eye_geometry},
                    {"eye_state", crimson::gui::canonicalOverlayStateName(snapshot.eyes.state)},
                    {"eye_frame", snapshot.eyes.frame ? snapshot.eyes.frame->camera_frame : -1},
+                   {"eye_requested_fields", camera_eye_requested_fields},
+                   {"eye_loaded_fields", snapshot.eyes.frame ? snapshot.eyes.frame->loaded_fields : 0},
                    {"eye_error", snapshot.eyes.error},
                    {"eye_expected_labels", canonical_expected_eye_label_count},
                    {"eye_actual_labels", mask_perf.angle_labels_drawn},
@@ -6599,6 +6620,16 @@ int main(int argc, char **argv) {
                   << " stable_frames="
                   << ui_reference_capture.stableFrameCount() << std::endl;
       }
+    }
+
+    if (canonical_detection_route) {
+      const uint64_t seek_requests =
+          playback_transport.seekCoordinator().metrics().requests;
+      // Empty demand cancels optional eyes; other products retain their own
+      // independent lifetime and the legacy full-eye request API is unchanged.
+      canonical_overlay_session.requestEyeFrames(
+          canonical_eye_demands, seek_requests != canonical_eye_seen_seek_requests);
+      canonical_eye_seen_seek_requests = seek_requests;
     }
 
     // Rendering

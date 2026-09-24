@@ -119,6 +119,15 @@ class EyeReader : public crimson::zarr::EyeGeometryOverlayRepository {
     result.detections.push_back(eye);
     return result;
   }
+  crimson::zarr::EyeGeometryOverlayResolution resolveCameraFrameFields(
+      int64_t frame, int width, int height,
+      crimson::zarr::EyeGeometryFieldMask fields,
+      const std::function<bool()>& cancelled = {}) const override {
+    if (cancelled && cancelled()) return {};
+    auto result = resolveCameraFrame(frame, width, height);
+    result.loaded_fields = crimson::zarr::NormalizeEyeGeometryFields(fields);
+    return result;
+  }
  private:
   crimson::zarr::EyeGeometryOverlayDescriptor descriptor_;
   std::shared_ptr<EyeReaderState> state_;
@@ -561,12 +570,51 @@ bool testIndependentEyeDemandAndSeek() {
   scheduler->shutdown();
   return true;
 }
+bool testCombinedEyeConsumers() {
+  using namespace crimson::zarr::EyeGeometryFields;
+  auto scheduler = std::make_shared<crimson::data::DataAccessScheduler>(32, 3, 1, 1);
+  auto eye_state = std::make_shared<EyeReaderState>();
+  crimson::gui::CanonicalOverlaySession session(
+      scheduler, [eye_state](const auto& r) {
+        auto result = opened(r.archive_path);
+        result.eyes = std::make_unique<EyeReader>(eye_state);
+        return result;
+      });
+  CHECK(session.beginOpen(request("combined-eye-consumers")));
+  CHECK(session.waitUntilOpen(3s));
+  const auto waitEyes = [&](int64_t frame, crimson::zarr::EyeGeometryFieldMask fields) {
+    const auto deadline = std::chrono::steady_clock::now() + 3s;
+    while (std::chrono::steady_clock::now() < deadline) {
+      const auto snapshot = session.snapshot(frame);
+      if (snapshot.eyes.frame &&
+          crimson::zarr::EyeGeometryFieldsCover(snapshot.eyes.frame->loaded_fields, fields))
+        return true;
+      std::this_thread::sleep_for(1ms);
+    }
+    return false;
+  };
+  CHECK(session.requestEyeFrames({{1, LeftGeometry, true}, {12, RightAngle, false}}, true));
+  CHECK(waitEyes(1, LeftGeometry) && waitEyes(12, RightAngle));
+  // Normal non-eye demand must not implicitly turn off these independent consumers.
+  CHECK(session.requestFrame(2, true, false, false, false, {}, false, false, false));
+  CHECK(waitFrame(session, 2));
+  CHECK(session.snapshot(1).eyes.frame && session.snapshot(12).eyes.frame);
+  CHECK(session.requestEyeFrames({{1, LeftGeometry, true}, {1, RightAngle, false}}));
+  CHECK(waitEyes(1, LeftGeometry | RightAngle));
+  CHECK(session.requestEyeFrames({}));
+  CHECK(!session.snapshot(1).eyes.frame);
+  CHECK(!session.snapshot(12).eyes.frame);
+  session.shutdown();
+  scheduler->shutdown();
+  return true;
+}
+
 int main() {
   if (!testSnapshotsAndFailures() || !testSupersededOpen() ||
       !testNonblockingCloseAndSourceIsolation() ||
       !testMaskReadAheadAtRenderRate(30) ||
       !testMaskReadAheadAtRenderRate(60) ||
       !testIndependentContourDemandAndFailure() ||
-      !testIndependentEyeDemandAndSeek()) return 1;
+      !testIndependentEyeDemandAndSeek() || !testCombinedEyeConsumers()) return 1;
   std::cout << "canonical_overlay_session_tests passed\n";
 }

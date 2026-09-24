@@ -27,6 +27,8 @@ struct EyeAngleInspectField {
   double value_x = 0.0;
   double value_y = 0.0;
   bool valid = false;
+  // Absent coverage is not a scientifically invalid measurement.
+  bool loaded = true;
 };
 
 struct EyeAngleInspectObservation {
