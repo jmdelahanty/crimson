@@ -1,0 +1,33 @@
+# Existing direct includes form the migration baseline. New source files must
+# use feature-level contracts instead of adding another loader dependency.
+set(CRIMSON_ZARR_LOADER_DIRECT_INCLUDE_ALLOWLIST
+    src/gui/analysis_timeline_eye_angle.cpp
+    src/gui/analysis_timeline_motion_controls.h
+    src/gui/analysis_timeline_motion_data.h
+    src/gui/analysis_timeline_motion_plot.h
+    src/gui/analysis_timeline_motion_sources.h
+    src/gui/analysis_timeline_motion_summary.h
+    src/gui/analysis_timeline_stimulus_context.cpp
+    src/gui/analysis_timeline_tail_kinematics.cpp
+    src/gui/analysis_timeline_window.cpp
+    src/gui/camera_view_eye_angle_overlay.h
+    src/gui/camera_view_window.h
+    src/gui/full_frame_keypoint_edit_overlay.h
+    src/gui/refined_keypoint_review_panel.h
+    src/gui/stimulus_event_timeline_window.cpp
+    src/gui_interpolation.h
+    src/live_crop_image_provider.h
+    src/media_session_loader.h
+    src/platform/nvidia/nvidia_camera_frame_data_adapter.h
+    src/red.cpp
+    src/refined_keypoint_repository.h
+    src/subject_mask_edit_session.h
+    src/zarr/clipped_detection_repository.h
+    src/zarr/legacy_detection_repository.cpp
+    src/zarr/legacy_keypoint_overlay_repository.cpp
+    src/zarr/legacy_subject_mask_overlay_repository.cpp
+    src/zarr/legacy_stimulus_repository.cpp
+    src/zarr_bbox_edit.h
+    src/zarr_loader_internal.h
+    src/zarr_persisted_crop_provider.h
+)

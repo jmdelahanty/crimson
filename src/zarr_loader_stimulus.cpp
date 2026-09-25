@@ -1,11 +1,662 @@
 #include "zarr_loader_internal.h"
+#include "zarr/chaser_distance_polar_legacy_repository.h"
+#include "zarr/stimulus_context_timeline_legacy_repository.h"
+#include "zarr/stimulus_repository.h"
 #include <iostream>
 
 using json = nlohmann::json;
 
+namespace {
+
+crimson::zarr::StimulusMappingPreference StimulusPreference(
+    bool prefer_corrected) {
+    return prefer_corrected
+               ? crimson::zarr::StimulusMappingPreference::PreferCorrected
+               : crimson::zarr::StimulusMappingPreference::LegacyOnly;
+}
+
+crimson::zarr::StimulusAlignmentView StimulusAlignment(
+    const ZarrDetectionData& data) {
+    const auto& interp = data.latest_interpolation;
+    return {
+        interp.stimulus_run_name,
+        interp.camera_frame_offset,
+        &interp.camera_to_metadata_index,
+        &interp.camera_to_metadata_index_corrected,
+        &interp.camera_to_stimulus_frame_corrected,
+        &interp.frame_metadata_stimulus_frames,
+        &interp.frame_metadata_stimulus_frames_corrected,
+        &interp.camera_frame_original,
+        &interp.camera_stimulus_frame_interpolated,
+        data.has_stimulus_alignment_data,
+        interp.has_direct_stimulus_lookup,
+        interp.frame_metadata_loaded,
+        interp.frame_metadata_corrected_loaded,
+    };
+}
+
+std::string stimulusJsonStringAttr(const json& attrs, const char* key) {
+    if (attrs.contains(key) && attrs[key].is_string()) {
+        return attrs[key].get<std::string>();
+    }
+    return {};
+}
+
+std::string stimulusJsonScalarStringAttr(const json& attrs, const char* key) {
+    if (!attrs.contains(key)) {
+        return {};
+    }
+    const auto& value = attrs[key];
+    if (value.is_string()) {
+        return value.get<std::string>();
+    }
+    if (value.is_number_integer()) {
+        return std::to_string(value.get<int64_t>());
+    }
+    if (value.is_number_unsigned()) {
+        return std::to_string(value.get<uint64_t>());
+    }
+    return {};
+}
+
+std::string latestCompleteFirstRunName(const json& attrs,
+                                       std::string* provenance) {
+    const char* keys[] = {
+        "latest_complete",
+        "latest_completed",
+        "latest_success",
+        "latest",
+    };
+    for (const char* key : keys) {
+        if (attrs.contains(key) && attrs[key].is_string()) {
+            if (provenance != nullptr) {
+                *provenance = key;
+            }
+            return attrs[key].get<std::string>();
+        }
+    }
+    return {};
+}
+
+int32_t stimulusJsonIntAttr(const json& attrs, const char* key) {
+    if (attrs.contains(key) && attrs[key].is_number_integer()) {
+        return attrs[key].get<int32_t>();
+    }
+    if (attrs.contains(key) && attrs[key].is_number()) {
+        return clampToInt32(static_cast<int64_t>(attrs[key].get<double>()));
+    }
+    return -1;
+}
+
+double stimulusJsonDoubleAttr(const json& attrs, const char* key) {
+    if (attrs.contains(key) && attrs[key].is_number()) {
+        return attrs[key].get<double>();
+    }
+    return std::numeric_limits<double>::quiet_NaN();
+}
+
+bool stimulusJsonBoolAttr(const json& attrs,
+                          const char* key,
+                          bool& out_value) {
+    if (!attrs.contains(key)) {
+        return false;
+    }
+    if (attrs[key].is_boolean()) {
+        out_value = attrs[key].get<bool>();
+        return true;
+    }
+    if (attrs[key].is_number_integer()) {
+        out_value = attrs[key].get<int>() != 0;
+        return true;
+    }
+    return false;
+}
+
+bool stimulusJsonFiniteDoubleAttr(const json& attrs,
+                                  const char* key,
+                                  double& out_value) {
+    const double value = stimulusJsonDoubleAttr(attrs, key);
+    if (!std::isfinite(value)) {
+        return false;
+    }
+    out_value = value;
+    return true;
+}
+
+bool chaserUsesArenaRelativeCanvas(const ZarrDetectionData::ChaserCoordinateTransform& transform) {
+    const std::string frame = toLowerCopy(transform.coordinate_frame);
+    const std::string origin = toLowerCopy(transform.coordinate_origin);
+    return frame == "arena_relative_canvas_px" ||
+           origin == "top_left_of_active_arena";
+}
+
+void applyChaserArenaConfigMetadata(const json& attrs,
+                                    ZarrDetectionData::ChaserCoordinateTransform& transform) {
+    double value = 0.0;
+    if (stimulusJsonFiniteDoubleAttr(attrs, "arena_origin_in_canvas_x_px", value)) {
+        transform.arena_origin_canvas_x_px = value;
+        transform.has_arena_canvas_origin = true;
+    }
+    if (stimulusJsonFiniteDoubleAttr(attrs, "arena_origin_in_canvas_y_px", value)) {
+        transform.arena_origin_canvas_y_px = value;
+        transform.has_arena_canvas_origin = true;
+    }
+    if (stimulusJsonFiniteDoubleAttr(attrs, "arena_region_width_px", value)) {
+        transform.arena_region_width_px = value;
+    }
+    if (stimulusJsonFiniteDoubleAttr(attrs, "arena_region_height_px", value)) {
+        transform.arena_region_height_px = value;
+    }
+
+    double center_x = std::numeric_limits<double>::quiet_NaN();
+    double center_y = std::numeric_limits<double>::quiet_NaN();
+    double width = std::numeric_limits<double>::quiet_NaN();
+    double height = std::numeric_limits<double>::quiet_NaN();
+    stimulusJsonFiniteDoubleAttr(attrs, "arena_center_x_px", center_x);
+    stimulusJsonFiniteDoubleAttr(attrs, "arena_center_y_px", center_y);
+    stimulusJsonFiniteDoubleAttr(attrs, "arena_width_px", width);
+    stimulusJsonFiniteDoubleAttr(attrs, "arena_height_px", height);
+    if (std::isfinite(width)) {
+        transform.arena_region_width_px = width;
+    }
+    if (std::isfinite(height)) {
+        transform.arena_region_height_px = height;
+    }
+    if (std::isfinite(center_x) && std::isfinite(width) && width > 0.0) {
+        transform.arena_origin_canvas_x_px = center_x - width * 0.5;
+        transform.has_arena_canvas_origin = true;
+    }
+    if (std::isfinite(center_y) && std::isfinite(height) && height > 0.0) {
+        transform.arena_origin_canvas_y_px = center_y - height * 0.5;
+        transform.has_arena_canvas_origin = true;
+    }
+}
+
+void applyChaserStateCoordinateMetadata(const json& attrs,
+                                        ZarrDetectionData::ChaserCoordinateTransform& transform) {
+    const std::string coordinate_frame = stimulusJsonStringAttr(attrs, "coordinate_frame");
+    const std::string coordinate_origin = stimulusJsonStringAttr(attrs, "coordinate_origin");
+    if (!coordinate_frame.empty()) {
+        transform.coordinate_frame = coordinate_frame;
+    }
+    if (!coordinate_origin.empty()) {
+        transform.coordinate_origin = coordinate_origin;
+    }
+}
+
+void applyChaserCoordinateTransformToRecord(
+    const ZarrDetectionData::ChaserCoordinateTransform& transform,
+    ZarrDetectionData::ChaserStateRecord& record) {
+    record.coordinate_frame = transform.coordinate_frame;
+    record.coordinate_origin = transform.coordinate_origin;
+
+    if (!transform.valid) {
+        return;
+    }
+
+    if (chaserUsesArenaRelativeCanvas(transform)) {
+        if (transform.has_arena_canvas_origin) {
+            record.stimulus_canvas_offset_x = transform.arena_origin_canvas_x_px;
+            record.stimulus_canvas_offset_y = transform.arena_origin_canvas_y_px;
+            record.has_stimulus_canvas_offset = true;
+        }
+        return;
+    }
+
+    auto convert = [&](float tex_x, float tex_y, double& cam_x, double& cam_y) -> bool {
+        if (!std::isfinite(tex_x) || !std::isfinite(tex_y)) {
+            return false;
+        }
+        cam_x = transform.offset_x_px + static_cast<double>(tex_x) * transform.scale;
+        cam_y = transform.offset_y_px + static_cast<double>(tex_y) * transform.scale;
+        return std::isfinite(cam_x) && std::isfinite(cam_y);
+    };
+    if (!record.has_camera_coords &&
+        convert(record.chaser_pos_x, record.chaser_pos_y,
+                record.chaser_camera_x, record.chaser_camera_y)) {
+        record.has_camera_coords = true;
+    }
+    double target_cam_x = std::numeric_limits<double>::quiet_NaN();
+    double target_cam_y = std::numeric_limits<double>::quiet_NaN();
+    if (convert(record.target_pos_x, record.target_pos_y,
+                target_cam_x, target_cam_y)) {
+        record.target_camera_x = target_cam_x;
+        record.target_camera_y = target_cam_y;
+    }
+}
+
+bool stimulusJsonFiniteFloatColorAttr(const json& attrs,
+                                      const char* key,
+                                      float& out_value) {
+    double value = 0.0;
+    if (!stimulusJsonFiniteDoubleAttr(attrs, key, value)) {
+        return false;
+    }
+    out_value = std::clamp(static_cast<float>(value), 0.0f, 1.0f);
+    return true;
+}
+
+std::optional<std::array<float, 4>> parseStimulusRgbaColor(
+    const json& attrs,
+    const char* prefix) {
+    const std::string base(prefix);
+    std::array<float, 4> rgba = {1.0f, 0.0f, 0.0f, 1.0f};
+    if (!stimulusJsonFiniteFloatColorAttr(
+            attrs, (base + "_r").c_str(), rgba[0]) ||
+        !stimulusJsonFiniteFloatColorAttr(
+            attrs, (base + "_g").c_str(), rgba[1]) ||
+        !stimulusJsonFiniteFloatColorAttr(
+            attrs, (base + "_b").c_str(), rgba[2])) {
+        return std::nullopt;
+    }
+    float alpha = 1.0f;
+    if (stimulusJsonFiniteFloatColorAttr(
+            attrs, (base + "_a").c_str(), alpha)) {
+        rgba[3] = alpha;
+    }
+    return rgba;
+}
+
+std::optional<json> parseJsonObjectString(const json& value) {
+    if (value.is_object()) {
+        return value;
+    }
+    if (!value.is_string()) {
+        return std::nullopt;
+    }
+    try {
+        json parsed = json::parse(value.get<std::string>());
+        if (parsed.is_object()) {
+            return parsed;
+        }
+    } catch (const std::exception&) {
+    }
+    return std::nullopt;
+}
+
+int hexNibble(char c) {
+    if (c >= '0' && c <= '9') {
+        return c - '0';
+    }
+    if (c >= 'a' && c <= 'f') {
+        return 10 + c - 'a';
+    }
+    if (c >= 'A' && c <= 'F') {
+        return 10 + c - 'A';
+    }
+    return -1;
+}
+
+std::optional<std::array<float, 4>> parseHexRgbaColor(std::string text) {
+    if (!text.empty() && text[0] == '#') {
+        text.erase(text.begin());
+    }
+    if (text.size() != 6 && text.size() != 8) {
+        return std::nullopt;
+    }
+    auto read_byte = [&](size_t offset) -> std::optional<int> {
+        const int hi = hexNibble(text[offset]);
+        const int lo = hexNibble(text[offset + 1]);
+        if (hi < 0 || lo < 0) {
+            return std::nullopt;
+        }
+        return hi * 16 + lo;
+    };
+    auto r = read_byte(0);
+    auto g = read_byte(2);
+    auto b = read_byte(4);
+    if (!r || !g || !b) {
+        return std::nullopt;
+    }
+    int a = 255;
+    if (text.size() == 8) {
+        auto alpha = read_byte(6);
+        if (!alpha) {
+            return std::nullopt;
+        }
+        a = *alpha;
+    }
+    return std::array<float, 4>{
+        static_cast<float>(*r) / 255.0f,
+        static_cast<float>(*g) / 255.0f,
+        static_cast<float>(*b) / 255.0f,
+        static_cast<float>(a) / 255.0f,
+    };
+}
+
+std::unordered_map<int32_t, std::array<float, 4>>
+collectChaserHexColorsFromSummary(const json& attrs) {
+    std::unordered_map<int32_t, std::array<float, 4>> colors;
+    if (!attrs.contains("summary") || !attrs["summary"].is_object()) {
+        return colors;
+    }
+    const auto& summary = attrs["summary"];
+    if (!summary.contains("chaser_color_hex") ||
+        !summary["chaser_color_hex"].is_object()) {
+        return colors;
+    }
+    for (auto it = summary["chaser_color_hex"].begin();
+         it != summary["chaser_color_hex"].end();
+         ++it) {
+        if (!it.value().is_string()) {
+            continue;
+        }
+        int32_t chaser_index = -1;
+        try {
+            chaser_index = static_cast<int32_t>(std::stoi(it.key()));
+        } catch (const std::exception&) {
+            continue;
+        }
+        auto color = parseHexRgbaColor(it.value().get<std::string>());
+        if (color.has_value()) {
+            colors[chaser_index] = *color;
+        }
+    }
+    return colors;
+}
+
+std::array<float, 4> fallbackChaserColor(int32_t chaser_index) {
+    static const std::array<std::array<float, 4>, 8> kPalette = {{
+        {1.00f, 0.12f, 0.10f, 1.0f},
+        {0.10f, 0.32f, 1.00f, 1.0f},
+        {0.10f, 0.78f, 0.32f, 1.0f},
+        {1.00f, 0.68f, 0.10f, 1.0f},
+        {0.70f, 0.24f, 0.95f, 1.0f},
+        {0.05f, 0.75f, 0.85f, 1.0f},
+        {0.95f, 0.25f, 0.58f, 1.0f},
+        {0.82f, 0.82f, 0.18f, 1.0f},
+    }};
+    const size_t index = static_cast<size_t>(
+        std::max<int32_t>(0, chaser_index)) %
+        kPalette.size();
+    return kPalette[index];
+}
+
+void collectChaserColorsFromParameters(
+    const json& params,
+    std::unordered_map<int32_t, std::array<float, 4>>& colors_by_index) {
+    if (!params.is_object() || !params.contains("chasers") ||
+        !params["chasers"].is_array()) {
+        return;
+    }
+
+    const auto& chasers = params["chasers"];
+    for (size_t i = 0; i < chasers.size(); ++i) {
+        const auto& chaser = chasers[i];
+        if (!chaser.is_object()) {
+            continue;
+        }
+        auto color = parseStimulusRgbaColor(chaser, "color");
+        if (!color.has_value()) {
+            continue;
+        }
+        int32_t chaser_index = stimulusJsonIntAttr(chaser, "chaser_index");
+        if (chaser_index < 0) {
+            chaser_index = stimulusJsonIntAttr(chaser, "index");
+        }
+        if (chaser_index < 0) {
+            chaser_index = static_cast<int32_t>(i);
+        }
+        if (colors_by_index.find(chaser_index) == colors_by_index.end()) {
+            colors_by_index.emplace(chaser_index, *color);
+        }
+    }
+}
+
+int32_t chaserIndexFromProtocolEntry(const json& chaser, size_t fallback_index) {
+    int32_t chaser_index = stimulusJsonIntAttr(chaser, "chaser_index");
+    if (chaser_index < 0) {
+        chaser_index = stimulusJsonIntAttr(chaser, "index");
+    }
+    if (chaser_index < 0) {
+        chaser_index = static_cast<int32_t>(fallback_index);
+    }
+    return chaser_index;
+}
+
+void collectChaserBehaviorFromParameters(
+    const json& params,
+    std::unordered_map<int32_t, ZarrDetectionData::ChaserBehaviorMetadata>& behavior_by_index) {
+    if (!params.is_object() || !params.contains("chasers") ||
+        !params["chasers"].is_array()) {
+        return;
+    }
+
+    const auto& chasers = params["chasers"];
+    for (size_t i = 0; i < chasers.size(); ++i) {
+        const auto& chaser = chasers[i];
+        if (!chaser.is_object()) {
+            continue;
+        }
+
+        ZarrDetectionData::ChaserBehaviorMetadata metadata;
+        const int32_t behavior_mode = stimulusJsonIntAttr(chaser, "behavior_mode");
+        if (behavior_mode >= 0) {
+            metadata.behavior_mode = behavior_mode;
+            metadata.has_behavior_mode = true;
+        }
+        bool value = false;
+        if (stimulusJsonBoolAttr(chaser, "enable_chase", value)) {
+            metadata.enable_chase = value;
+            metadata.has_enable_chase = true;
+        }
+        if (stimulusJsonBoolAttr(chaser, "enable_random_movement", value)) {
+            metadata.enable_random_movement = value;
+            metadata.has_enable_random_movement = true;
+        }
+        if (!metadata.has_behavior_mode && !metadata.has_enable_chase &&
+            !metadata.has_enable_random_movement) {
+            continue;
+        }
+
+        const int32_t chaser_index = chaserIndexFromProtocolEntry(chaser, i);
+        if (behavior_by_index.find(chaser_index) == behavior_by_index.end()) {
+            behavior_by_index.emplace(chaser_index, metadata);
+        }
+    }
+}
+
+void collectChaserColorsFromProtocolObject(
+    const json& protocol,
+    std::unordered_map<int32_t, std::array<float, 4>>& colors_by_index) {
+    if (!protocol.is_object()) {
+        return;
+    }
+
+    collectChaserColorsFromParameters(protocol, colors_by_index);
+
+    if (protocol.contains("parameters")) {
+        auto parameters = parseJsonObjectString(protocol["parameters"]);
+        if (parameters.has_value()) {
+            collectChaserColorsFromParameters(*parameters, colors_by_index);
+        }
+    }
+
+    if (protocol.contains("steps") && protocol["steps"].is_array()) {
+        for (const auto& step : protocol["steps"]) {
+            collectChaserColorsFromProtocolObject(step, colors_by_index);
+        }
+    }
+}
+
+void collectChaserBehaviorFromProtocolObject(
+    const json& protocol,
+    std::unordered_map<int32_t, ZarrDetectionData::ChaserBehaviorMetadata>& behavior_by_index) {
+    if (!protocol.is_object()) {
+        return;
+    }
+
+    collectChaserBehaviorFromParameters(protocol, behavior_by_index);
+
+    if (protocol.contains("parameters")) {
+        auto parameters = parseJsonObjectString(protocol["parameters"]);
+        if (parameters.has_value()) {
+            collectChaserBehaviorFromParameters(*parameters, behavior_by_index);
+        }
+    }
+
+    if (protocol.contains("steps") && protocol["steps"].is_array()) {
+        for (const auto& step : protocol["steps"]) {
+            collectChaserBehaviorFromProtocolObject(step, behavior_by_index);
+        }
+    }
+}
+
+void mergeChaserColorMetadata(
+    const std::unordered_map<int32_t, std::array<float, 4>>& parsed_colors,
+    ZarrDetectionData& data) {
+    for (const auto& [chaser_index, color] : parsed_colors) {
+        if (data.chaser_rgba_by_index.find(chaser_index) ==
+            data.chaser_rgba_by_index.end()) {
+            data.chaser_rgba_by_index.emplace(chaser_index, color);
+        }
+    }
+    data.has_chaser_rgba_metadata = !data.chaser_rgba_by_index.empty();
+}
+
+void mergeChaserBehaviorMetadata(
+    const std::unordered_map<int32_t, ZarrDetectionData::ChaserBehaviorMetadata>& parsed_behavior,
+    ZarrDetectionData& data) {
+    for (const auto& [chaser_index, behavior] : parsed_behavior) {
+        if (data.chaser_behavior_by_index.find(chaser_index) ==
+            data.chaser_behavior_by_index.end()) {
+            data.chaser_behavior_by_index.emplace(chaser_index, behavior);
+        }
+    }
+    data.has_chaser_behavior_metadata = !data.chaser_behavior_by_index.empty();
+}
+
+void appendChaserProtocolMetadataFromProtocolString(const std::string& protocol_json,
+                                                    const char* source,
+                                                    ZarrDetectionData& data) {
+    if (protocol_json.empty()) {
+        return;
+    }
+
+    try {
+        const json protocol = json::parse(protocol_json);
+        const size_t color_before = data.chaser_rgba_by_index.size();
+        const size_t behavior_before = data.chaser_behavior_by_index.size();
+        std::unordered_map<int32_t, std::array<float, 4>> parsed_colors;
+        std::unordered_map<int32_t, ZarrDetectionData::ChaserBehaviorMetadata>
+            parsed_behavior;
+        collectChaserColorsFromProtocolObject(protocol, parsed_colors);
+        collectChaserBehaviorFromProtocolObject(protocol, parsed_behavior);
+        mergeChaserColorMetadata(parsed_colors, data);
+        mergeChaserBehaviorMetadata(parsed_behavior, data);
+        const size_t color_added = data.chaser_rgba_by_index.size() - color_before;
+        const size_t behavior_added =
+            data.chaser_behavior_by_index.size() - behavior_before;
+        if (color_added > 0) {
+            std::cout << "  [Chaser] Loaded protocol color metadata for "
+                      << color_added << " chaser(s) from " << source << std::endl;
+        }
+        if (behavior_added > 0) {
+            std::cout << "  [Chaser] Loaded protocol behavior metadata for "
+                      << behavior_added << " chaser(s) from " << source << std::endl;
+        }
+    } catch (const std::exception& e) {
+        std::cout << "  [Chaser] Failed to parse protocol chaser metadata from "
+                  << source << ": " << e.what() << std::endl;
+    }
+}
+
+void applyChaserColorMetadataToRecord(const ZarrDetectionData& data,
+                                      ZarrDetectionData::ChaserStateRecord& record) {
+    if (!data.has_chaser_rgba_metadata || record.chaser_index < 0) {
+        return;
+    }
+    auto it = data.chaser_rgba_by_index.find(record.chaser_index);
+    if (it == data.chaser_rgba_by_index.end()) {
+        return;
+    }
+    record.chaser_rgba = it->second;
+    record.has_chaser_rgba = true;
+}
+
+void applyChaserBehaviorMetadataToRecord(const ZarrDetectionData& data,
+                                         ZarrDetectionData::ChaserStateRecord& record) {
+    if (!data.has_chaser_behavior_metadata || record.chaser_index < 0) {
+        return;
+    }
+    auto it = data.chaser_behavior_by_index.find(record.chaser_index);
+    if (it == data.chaser_behavior_by_index.end()) {
+        return;
+    }
+    const auto& behavior = it->second;
+    record.behavior_mode = behavior.behavior_mode;
+    record.has_behavior_mode = behavior.has_behavior_mode;
+    record.enable_chase = behavior.enable_chase;
+    record.has_enable_chase = behavior.has_enable_chase;
+    record.enable_random_movement = behavior.enable_random_movement;
+    record.has_enable_random_movement = behavior.has_enable_random_movement;
+}
+
+bool parseStimulusStepDirectoryName(const std::string& name,
+                                    int32_t& out_step_index) {
+    constexpr const char* kPrefix = "step_";
+    constexpr size_t kPrefixLen = 5;
+    if (name.rfind(kPrefix, 0) != 0 || name.size() <= kPrefixLen) {
+        return false;
+    }
+    int64_t value = 0;
+    for (size_t i = kPrefixLen; i < name.size(); ++i) {
+        const unsigned char c = static_cast<unsigned char>(name[i]);
+        if (!std::isdigit(c)) {
+            return false;
+        }
+        value = value * 10 + static_cast<int64_t>(name[i] - '0');
+        if (value > std::numeric_limits<int32_t>::max()) {
+            return false;
+        }
+    }
+    out_step_index = static_cast<int32_t>(value);
+    return true;
+}
+
+std::vector<int32_t> collectStimulusStepIndicesFs(
+    const std::string& root_path,
+    const std::string& run_name) {
+    namespace fs = std::filesystem;
+    std::vector<int32_t> indices;
+    if (root_path.empty() || run_name.empty()) {
+        return indices;
+    }
+
+    const fs::path steps_dir =
+        fs::path(root_path) / "analysis" / "stimulus_runs" / run_name /
+        "steps";
+    if (!fs::exists(steps_dir) || !fs::is_directory(steps_dir)) {
+        return indices;
+    }
+
+    for (const auto& entry : fs::directory_iterator(steps_dir)) {
+        if (!entry.is_directory()) {
+            continue;
+        }
+        if (!fs::exists(entry.path() / "zarr.json")) {
+            continue;
+        }
+        int32_t step_index = -1;
+        if (parseStimulusStepDirectoryName(
+                entry.path().filename().string(), step_index)) {
+            indices.push_back(step_index);
+        }
+    }
+    std::sort(indices.begin(), indices.end());
+    indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
+    return indices;
+}
+
+}  // namespace
+
 bool ZarrDetectionLoader::loadStimulusAlignment(const ts::kvstore::KvStore& store) {
     std::optional<std::string> latest_run_opt;
-    if (auto group_attrs = readAttrsAny(store, "analysis/stimulus_runs")) {
+    if (!requested_stimulus_run_name_.empty()) {
+        latest_run_opt = requested_stimulus_run_name_;
+        std::cout << "  [Stimulus] Requested run candidate: '"
+                  << *latest_run_opt << "'" << std::endl;
+    } else if (auto group_attrs = readAttrsAny(store, "analysis/stimulus_runs")) {
         auto latest = extractLatestRunName(*group_attrs);
         if (!latest.empty()) {
             std::cout << "  [Stimulus] Attr latest run candidate: '" << latest << "'" << std::endl;
@@ -38,27 +689,10 @@ bool ZarrDetectionLoader::loadStimulusAlignment(const ts::kvstore::KvStore& stor
     data_.stimulus_video_path.clear();
     data_.stimulus_source_h5.clear();
     data_.chaser_transform = ZarrDetectionData::ChaserCoordinateTransform();
-
-    // Always attempt to load stimulus event metadata, even if frame alignment
-    // data is missing. This keeps the event timeline available in the UI.
-    loadStimulusEventEnums(store);
-    bool events_loaded = loadStimulusEventsForRun(store, run_base);
-    if (!events_loaded) {
-        std::cout << "  Stimulus run '" << latest_run
-                  << "' does not contain events metadata." << std::endl;
-    } else {
-        std::cout << "  Stimulus run '" << latest_run << "' events metadata loaded" << std::endl;
-    }
-
-    if (!loadChaserStates(store, run_base)) {
-        std::cout << "  [Chaser] No chaser tracking data for run '" << latest_run << "'" << std::endl;
-    }
-    if (!loadChaserBoundingBoxes(store, run_base)) {
-        std::cout << "  [ChaserBBox] No tracking bounding boxes for run '" << latest_run << "'" << std::endl;
-    }
-    if (!loadChaserStatesInterpolated(store, run_base)) {
-        std::cout << "  [ChaserInterp] No interpolated chaser data for run '" << latest_run << "'" << std::endl;
-    }
+    data_.chaser_rgba_by_index.clear();
+    data_.has_chaser_rgba_metadata = false;
+    data_.chaser_behavior_by_index.clear();
+    data_.has_chaser_behavior_metadata = false;
 
     std::string stimulus_created_at;
     int64_t camera_frame_offset = 0;
@@ -66,8 +700,9 @@ bool ZarrDetectionLoader::loadStimulusAlignment(const ts::kvstore::KvStore& stor
     std::vector<uint8_t> metadata_mask;
     std::vector<int64_t> camera_to_stimulus_frame_corrected64;
     std::vector<uint8_t> camera_stimulus_frame_interpolated;
+    std::optional<json> run_attrs = readAttrsAny(store, run_base);
 
-    if (auto run_attrs = readAttrsAny(store, run_base)) {
+    if (run_attrs.has_value()) {
         if (run_attrs->contains("created_at_utc") && (*run_attrs)["created_at_utc"].is_string()) {
             stimulus_created_at = (*run_attrs)["created_at_utc"].get<std::string>();
         } else if (run_attrs->contains("created_at") && (*run_attrs)["created_at"].is_string()) {
@@ -82,72 +717,181 @@ bool ZarrDetectionLoader::loadStimulusAlignment(const ts::kvstore::KvStore& stor
             (*run_attrs)["source_h5"].is_string()) {
             data_.stimulus_source_h5 = (*run_attrs)["source_h5"].get<std::string>();
         }
+        if (run_attrs->contains("protocol_json") &&
+            (*run_attrs)["protocol_json"].is_string()) {
+            appendChaserProtocolMetadataFromProtocolString(
+                (*run_attrs)["protocol_json"].get<std::string>(),
+                "run protocol_json",
+                data_);
+        }
+    }
 
-        auto parseCoordinateTransform = [&]() {
-            try {
-                if (run_attrs->contains("coordinate_transform") &&
-                    (*run_attrs)["coordinate_transform"].is_string()) {
-                    auto transform_json = json::parse((*run_attrs)["coordinate_transform"].get<std::string>());
-                    if (transform_json.contains("texture_dimensions") &&
-                        transform_json["texture_dimensions"].is_array()) {
-                        const auto& dims = transform_json["texture_dimensions"];
-                        if (dims.size() == 2) {
-                            data_.chaser_transform.texture_width = dims[0].get<double>();
-                            data_.chaser_transform.texture_height = dims[1].get<double>();
-                        }
-                    }
-                    if (transform_json.contains("camera_dimensions") &&
-                        transform_json["camera_dimensions"].is_array()) {
-                        const auto& dims = transform_json["camera_dimensions"];
-                        if (dims.size() == 2) {
-                            data_.chaser_transform.camera_width = dims[0].get<double>();
-                            data_.chaser_transform.camera_height = dims[1].get<double>();
-                        }
-                    }
-                    if (transform_json.contains("texture_to_camera_scale") &&
-                        transform_json["texture_to_camera_scale"].is_number()) {
-                        data_.chaser_transform.scale = transform_json["texture_to_camera_scale"].get<double>();
+    auto parseCoordinateTransform = [&]() {
+        bool saw_coordinate_metadata = false;
+        try {
+            if (run_attrs.has_value() &&
+                run_attrs->contains("coordinate_transform") &&
+                (*run_attrs)["coordinate_transform"].is_string()) {
+                saw_coordinate_metadata = true;
+                auto transform_json =
+                    json::parse((*run_attrs)["coordinate_transform"].get<std::string>());
+                if (transform_json.contains("texture_dimensions") &&
+                    transform_json["texture_dimensions"].is_array()) {
+                    const auto& dims = transform_json["texture_dimensions"];
+                    if (dims.size() == 2) {
+                        data_.chaser_transform.texture_width = dims[0].get<double>();
+                        data_.chaser_transform.texture_height = dims[1].get<double>();
                     }
                 }
-                if (run_attrs->contains("arena_config_json") &&
-                    (*run_attrs)["arena_config_json"].is_string()) {
-                    auto arena_json = json::parse((*run_attrs)["arena_config_json"].get<std::string>());
-                    if (arena_json.contains("sub_arena_x_px") && arena_json["sub_arena_x_px"].is_number()) {
-                        data_.chaser_transform.offset_x_px = arena_json["sub_arena_x_px"].get<double>();
-                    }
-                    if (arena_json.contains("sub_arena_y_px") && arena_json["sub_arena_y_px"].is_number()) {
-                        data_.chaser_transform.offset_y_px = arena_json["sub_arena_y_px"].get<double>();
-                    }
-                    if (arena_json.contains("sub_arena_width_px") && arena_json["sub_arena_width_px"].is_number()) {
-                        double sub_width = arena_json["sub_arena_width_px"].get<double>();
-                        if (sub_width > 0.0 && data_.chaser_transform.texture_width > 0.0) {
-                            data_.chaser_transform.scale = sub_width / data_.chaser_transform.texture_width;
-                        }
+                if (transform_json.contains("camera_dimensions") &&
+                    transform_json["camera_dimensions"].is_array()) {
+                    const auto& dims = transform_json["camera_dimensions"];
+                    if (dims.size() == 2) {
+                        data_.chaser_transform.camera_width = dims[0].get<double>();
+                        data_.chaser_transform.camera_height = dims[1].get<double>();
                     }
                 }
-            } catch (const std::exception& e) {
-                std::cout << "  [Chaser] Failed to parse coordinate_transform metadata: "
-                          << e.what() << std::endl;
-            }
-
-            if (data_.chaser_transform.texture_width <= 0.0) {
-                data_.chaser_transform.texture_width = 358.0;
-            }
-            if (data_.chaser_transform.texture_height <= 0.0) {
-                data_.chaser_transform.texture_height = 358.0;
-            }
-            if (data_.chaser_transform.scale <= 0.0) {
-                if (data_.chaser_transform.camera_width > 0.0) {
+                if (transform_json.contains("texture_to_camera_scale") &&
+                    transform_json["texture_to_camera_scale"].is_number()) {
                     data_.chaser_transform.scale =
-                        data_.chaser_transform.camera_width / data_.chaser_transform.texture_width;
-                } else {
-                    data_.chaser_transform.scale = 1.0;
+                        transform_json["texture_to_camera_scale"].get<double>();
+                }
+                applyChaserStateCoordinateMetadata(transform_json, data_.chaser_transform);
+            }
+
+            if (run_attrs.has_value() &&
+                run_attrs->contains("arena_config_json") &&
+                (*run_attrs)["arena_config_json"].is_string()) {
+                saw_coordinate_metadata = true;
+                auto arena_json =
+                    json::parse((*run_attrs)["arena_config_json"].get<std::string>());
+                std::string active_camera_id;
+                if (arena_json.is_object()) {
+                    active_camera_id =
+                        stimulusJsonScalarStringAttr(arena_json, "active_camera_id");
+                }
+                if (active_camera_id.empty() && run_attrs.has_value()) {
+                    active_camera_id =
+                        stimulusJsonScalarStringAttr(*run_attrs, "active_camera_id");
+                }
+                auto apply_arena_config_candidate = [&](const json& candidate) {
+                    double value = 0.0;
+                    if (stimulusJsonFiniteDoubleAttr(candidate, "sub_arena_x_px", value)) {
+                        data_.chaser_transform.offset_x_px = value;
+                    }
+                    if (stimulusJsonFiniteDoubleAttr(candidate, "sub_arena_y_px", value)) {
+                        data_.chaser_transform.offset_y_px = value;
+                    }
+                    if (stimulusJsonFiniteDoubleAttr(candidate, "sub_arena_width_px", value) &&
+                        value > 0.0 && data_.chaser_transform.texture_width > 0.0) {
+                        data_.chaser_transform.scale =
+                            value / data_.chaser_transform.texture_width;
+                    }
+                    applyChaserArenaConfigMetadata(candidate, data_.chaser_transform);
+                };
+                if (arena_json.is_object()) {
+                    apply_arena_config_candidate(arena_json);
+                    if (arena_json.contains("camera_calibrations") &&
+                        arena_json["camera_calibrations"].is_array()) {
+                        for (const auto& candidate : arena_json["camera_calibrations"]) {
+                            if (!candidate.is_object()) {
+                                continue;
+                            }
+                            const std::string candidate_camera_id =
+                                stimulusJsonScalarStringAttr(candidate, "camera_id");
+                            if (!active_camera_id.empty() &&
+                                !candidate_camera_id.empty() &&
+                                candidate_camera_id != active_camera_id) {
+                                continue;
+                            }
+                            apply_arena_config_candidate(candidate);
+                        }
+                    }
                 }
             }
-            data_.chaser_transform.valid = true;
-        };
+        } catch (const std::exception& e) {
+            std::cout << "  [Chaser] Failed to parse coordinate_transform metadata: "
+                      << e.what() << std::endl;
+        }
 
-        parseCoordinateTransform();
+        if (auto chaser_attrs =
+                readAttrsAny(store, run_base + "tracking_data/chaser_states")) {
+            saw_coordinate_metadata = true;
+            applyChaserStateCoordinateMetadata(*chaser_attrs, data_.chaser_transform);
+        } else if (auto interpolated_attrs =
+                       readAttrsAny(store, run_base + "tracking_data/chaser_states_interpolated")) {
+            saw_coordinate_metadata = true;
+            applyChaserStateCoordinateMetadata(*interpolated_attrs, data_.chaser_transform);
+        }
+
+        if (auto arena_geometry_attrs =
+                readAttrsAny(store, run_base + "calibration/arena_geometry")) {
+            saw_coordinate_metadata = true;
+            applyChaserStateCoordinateMetadata(*arena_geometry_attrs, data_.chaser_transform);
+            applyChaserArenaConfigMetadata(*arena_geometry_attrs, data_.chaser_transform);
+        }
+
+        if (data_.chaser_transform.texture_width <= 0.0) {
+            data_.chaser_transform.texture_width = 358.0;
+        }
+        if (data_.chaser_transform.texture_height <= 0.0) {
+            data_.chaser_transform.texture_height = 358.0;
+        }
+        if (data_.chaser_transform.scale <= 0.0) {
+            if (data_.chaser_transform.camera_width > 0.0) {
+                data_.chaser_transform.scale =
+                    data_.chaser_transform.camera_width / data_.chaser_transform.texture_width;
+            } else {
+                data_.chaser_transform.scale = 1.0;
+            }
+        }
+        data_.chaser_transform.valid =
+            saw_coordinate_metadata ||
+            !data_.chaser_transform.coordinate_frame.empty() ||
+            data_.chaser_transform.has_arena_canvas_origin;
+
+        if (data_.chaser_transform.valid) {
+            std::cout << "  [Chaser] Coordinate metadata frame='"
+                      << data_.chaser_transform.coordinate_frame
+                      << "' origin='" << data_.chaser_transform.coordinate_origin
+                      << "' texture=" << data_.chaser_transform.texture_width
+                      << "x" << data_.chaser_transform.texture_height
+                      << " scale=" << data_.chaser_transform.scale;
+            if (data_.chaser_transform.has_arena_canvas_origin) {
+                std::cout << " arena_origin_canvas=("
+                          << data_.chaser_transform.arena_origin_canvas_x_px
+                          << "," << data_.chaser_transform.arena_origin_canvas_y_px
+                          << ")";
+            }
+            std::cout << std::endl;
+        }
+    };
+
+    parseCoordinateTransform();
+
+    loadStimulusStepsForRun(store, run_base, latest_run);
+
+    // Always attempt to load stimulus event metadata, even if frame alignment
+    // data is missing. This keeps the event timeline available in the UI.
+    loadStimulusEventEnums(store);
+    bool events_loaded = loadStimulusEventsForRun(store, run_base);
+    if (!events_loaded) {
+        data_.stimulus_events_run_name.clear();
+        std::cout << "  Stimulus run '" << latest_run
+                  << "' does not contain events metadata." << std::endl;
+    } else {
+        data_.stimulus_events_run_name = latest_run;
+        std::cout << "  Stimulus run '" << latest_run << "' events metadata loaded" << std::endl;
+    }
+
+    if (!loadChaserStates(store, run_base)) {
+        std::cout << "  [Chaser] No chaser tracking data for run '" << latest_run << "'" << std::endl;
+    }
+    if (!loadChaserBoundingBoxes(store, run_base)) {
+        std::cout << "  [ChaserBBox] No tracking bounding boxes for run '" << latest_run << "'" << std::endl;
+    }
+    if (!loadChaserStatesInterpolated(store, run_base)) {
+        std::cout << "  [ChaserInterp] No interpolated chaser data for run '" << latest_run << "'" << std::endl;
     }
 
     if (auto align_attrs = readAttrsAny(store, run_base + "frame_alignment")) {
@@ -353,6 +1097,7 @@ bool ZarrDetectionLoader::loadStimulusAlignment(const ts::kvstore::KvStore& stor
     if (has_metadata_mask) {
         stored_mask = metadata_mask;
     }
+    interp.camera_frame_original = camera_mask;
     if (has_direct_stimulus_lookup && !camera_to_stimulus_frame_corrected64.empty()) {
         interp.camera_to_stimulus_frame_corrected.resize(camera_to_stimulus_frame_corrected64.size());
         for (size_t i = 0; i < camera_to_stimulus_frame_corrected64.size(); ++i) {
@@ -408,6 +1153,154 @@ bool ZarrDetectionLoader::loadStimulusAlignment(const ts::kvstore::KvStore& stor
    return true;
 }
 
+bool ZarrDetectionLoader::loadStimulusStepsForRun(
+    const ts::kvstore::KvStore& store,
+    const std::string& run_base,
+    const std::string& run_name) {
+    data_.stimulus_steps.clear();
+    data_.has_stimulus_steps = false;
+    data_.stimulus_steps_run_name.clear();
+
+    if (run_name.empty()) {
+        return false;
+    }
+
+    const std::vector<int32_t> step_indices =
+        collectStimulusStepIndicesFs(root_path_, run_name);
+    if (step_indices.empty()) {
+        std::cout << "  [StimulusSteps] No canonical step groups found for run '"
+                  << run_name << "'" << std::endl;
+        return false;
+    }
+
+    auto read_step_attrs = [&](const std::string& relative_path)
+        -> std::optional<json> {
+        if (!root_path_.empty()) {
+            const auto zarr_json_path =
+                std::filesystem::path(root_path_) / relative_path /
+                "zarr.json";
+            if (!std::filesystem::exists(zarr_json_path)) {
+                return std::nullopt;
+            }
+            return readAttrsFromZarrJsonFile(zarr_json_path);
+        }
+        return readAttrsAny(store, relative_path);
+    };
+
+    std::vector<ZarrDetectionData::StimulusStep> steps;
+    steps.reserve(step_indices.size());
+
+    for (const int32_t discovered_step_index : step_indices) {
+        const std::string step_name =
+            "step_" + std::to_string(discovered_step_index);
+        const std::string step_base =
+            appendPath(appendPath(run_base, "steps"), step_name);
+        auto step_attrs = read_step_attrs(step_base);
+        if (!step_attrs) {
+            continue;
+        }
+
+        ZarrDetectionData::StimulusStep step;
+        step.step_index =
+            stimulusJsonIntAttr(*step_attrs, "step_index");
+        if (step.step_index < 0) {
+            step.step_index = discovered_step_index;
+        }
+        step.step_name = stimulusJsonStringAttr(*step_attrs, "step_name");
+        step.stimulus_mode_id =
+            stimulusJsonIntAttr(*step_attrs, "stimulus_mode_id");
+        step.stimulus_mode =
+            stimulusJsonStringAttr(*step_attrs, "stimulus_mode");
+        step.start_camera_frame =
+            stimulusJsonIntAttr(*step_attrs, "start_camera_frame");
+        step.end_camera_frame =
+            stimulusJsonIntAttr(*step_attrs, "end_camera_frame");
+        step.duration_s = stimulusJsonDoubleAttr(*step_attrs, "duration_s");
+        step.raw_protocol_params_json =
+            stimulusJsonStringAttr(*step_attrs, "raw_protocol_params_json");
+        appendChaserProtocolMetadataFromProtocolString(
+            step.raw_protocol_params_json,
+            "step raw_protocol_params_json",
+            data_);
+
+        if (auto moving_attrs =
+                read_step_attrs(appendPath(step_base, "moving_grating"))) {
+            auto& moving = step.moving_grating;
+            moving.present = true;
+            moving.grating_direction_camera_deg = stimulusJsonDoubleAttr(
+                *moving_attrs, "grating_direction_camera_deg");
+            moving.orientation_degrees_authored = stimulusJsonDoubleAttr(
+                *moving_attrs, "orientation_degrees_authored");
+            moving.camera_to_projector_offset_deg = stimulusJsonDoubleAttr(
+                *moving_attrs, "camera_to_projector_offset_deg");
+            moving.direction_mapping_status = stimulusJsonStringAttr(
+                *moving_attrs, "direction_mapping_status");
+            moving.has_direction_mapping_validated = stimulusJsonBoolAttr(
+                *moving_attrs,
+                "direction_mapping_validated",
+                moving.direction_mapping_validated);
+            moving.speed_mm_s =
+                stimulusJsonDoubleAttr(*moving_attrs, "speed_mm_s");
+            moving.temporal_frequency_hz = stimulusJsonDoubleAttr(
+                *moving_attrs, "temporal_frequency_hz");
+        }
+
+        if (auto concentric_attrs =
+                read_step_attrs(appendPath(step_base, "concentric_grating"))) {
+            auto& concentric = step.concentric_grating;
+            concentric.present = true;
+            concentric.stimulus_role = stimulusJsonStringAttr(
+                *concentric_attrs, "stimulus_role");
+            concentric.radial_polarity_authored = stimulusJsonStringAttr(
+                *concentric_attrs, "radial_polarity_authored");
+            concentric.radial_sign_authored = stimulusJsonDoubleAttr(
+                *concentric_attrs, "radial_sign_authored");
+            concentric.has_radial_polarity_validated = stimulusJsonBoolAttr(
+                *concentric_attrs,
+                "radial_polarity_validated",
+                concentric.radial_polarity_validated);
+            concentric.center_x_px =
+                stimulusJsonDoubleAttr(*concentric_attrs, "center_x_px");
+            concentric.center_y_px =
+                stimulusJsonDoubleAttr(*concentric_attrs, "center_y_px");
+            concentric.center_x_mm =
+                stimulusJsonDoubleAttr(*concentric_attrs, "center_x_mm");
+            concentric.center_y_mm =
+                stimulusJsonDoubleAttr(*concentric_attrs, "center_y_mm");
+            concentric.target_radius_min_mm = stimulusJsonDoubleAttr(
+                *concentric_attrs, "target_radius_min_mm");
+            concentric.target_radius_max_mm = stimulusJsonDoubleAttr(
+                *concentric_attrs, "target_radius_max_mm");
+            concentric.speed_mm_s =
+                stimulusJsonDoubleAttr(*concentric_attrs, "speed_mm_s");
+            concentric.temporal_frequency_hz = stimulusJsonDoubleAttr(
+                *concentric_attrs, "temporal_frequency_hz");
+        }
+
+        steps.push_back(std::move(step));
+    }
+
+    std::sort(steps.begin(),
+              steps.end(),
+              [](const auto& a, const auto& b) {
+                  if (a.start_camera_frame != b.start_camera_frame) {
+                      return a.start_camera_frame < b.start_camera_frame;
+                  }
+                  return a.step_index < b.step_index;
+              });
+
+    data_.stimulus_steps = std::move(steps);
+    data_.has_stimulus_steps = !data_.stimulus_steps.empty();
+    if (data_.has_stimulus_steps) {
+        data_.stimulus_steps_run_name = run_name;
+        std::cout << "  [StimulusSteps] Loaded "
+                  << data_.stimulus_steps.size()
+                  << " canonical steps for run '" << run_name << "'"
+                  << std::endl;
+    }
+    return data_.has_stimulus_steps;
+}
+
 void ZarrDetectionLoader::loadStimulusEventEnums(const ts::kvstore::KvStore& store) {
     if (!data_.event_type_names.empty()) {
         return;
@@ -461,6 +1354,7 @@ bool ZarrDetectionLoader::loadStimulusEventsForRun(const ts::kvstore::KvStore& s
     std::string events_base = run_base + "events/";
     bool has_column_layout = arrayExists(store, events_base + "stimulus_frame_num");
     bool has_structured_layout = arrayExists(store, run_base + "events");
+    clearStimulusEventTimelineCache();
 
     std::cout << "  [StimulusEvents] Inspecting run '" << run_base << "'" << std::endl;
     std::cout << "    events_base='" << events_base << "'" << std::endl;
@@ -573,6 +1467,9 @@ bool ZarrDetectionLoader::loadStimulusEventsForRun(const ts::kvstore::KvStore& s
             std::cout << "  No stimulus events found for run '" << run_base
                       << "'" << std::endl;
         }
+        rebuildStimulusEventTimelineCache(has_frame_mapping
+                                              ? &stimulus_to_camera_map
+                                              : nullptr);
         return data_.has_stimulus_events;
     };
 
@@ -617,6 +1514,7 @@ bool ZarrDetectionLoader::loadStimulusEventsForRun(const ts::kvstore::KvStore& s
             data_.stimulus_events_by_frame.clear();
             data_.stimulus_events_by_camera_frame.clear();
             data_.has_stimulus_events = false;
+            clearStimulusEventTimelineCache();
             return true;
         }
 
@@ -696,6 +1594,7 @@ bool ZarrDetectionLoader::loadStimulusEventsForRun(const ts::kvstore::KvStore& s
         data_.stimulus_events_by_frame.clear();
         data_.stimulus_events_by_camera_frame.clear();
         data_.has_stimulus_events = false;
+        clearStimulusEventTimelineCache();
         std::cout << "  [StimulusEvents] Structured layout absent and column layout failed"
                   << std::endl;
         return false;
@@ -1117,27 +2016,9 @@ bool ZarrDetectionLoader::loadChaserStates(const ts::kvstore::KvStore& store,
         record.timestamp_ns_session = timestamps_ns[i];
         record.is_chasing = is_chasing_raw[i];
         record.texture_space = true;
-        if (data_.chaser_transform.valid) {
-            auto convert = [&](float tex_x, float tex_y, double& cam_x, double& cam_y) -> bool {
-                if (!std::isfinite(tex_x) || !std::isfinite(tex_y)) {
-                    return false;
-                }
-                cam_x = data_.chaser_transform.offset_x_px + static_cast<double>(tex_x) * data_.chaser_transform.scale;
-                cam_y = data_.chaser_transform.offset_y_px + static_cast<double>(tex_y) * data_.chaser_transform.scale;
-                return std::isfinite(cam_x) && std::isfinite(cam_y);
-            };
-            if (convert(record.chaser_pos_x, record.chaser_pos_y,
-                        record.chaser_camera_x, record.chaser_camera_y)) {
-                record.has_camera_coords = true;
-            }
-            double target_cam_x = std::numeric_limits<double>::quiet_NaN();
-            double target_cam_y = std::numeric_limits<double>::quiet_NaN();
-            if (convert(record.target_pos_x, record.target_pos_y,
-                        target_cam_x, target_cam_y)) {
-                record.target_camera_x = target_cam_x;
-                record.target_camera_y = target_cam_y;
-            }
-        }
+        applyChaserCoordinateTransformToRecord(data_.chaser_transform, record);
+        applyChaserColorMetadataToRecord(data_, record);
+        applyChaserBehaviorMetadataToRecord(data_, record);
         data_.chaser_states.push_back(std::move(record));
     }
 
@@ -1372,6 +2253,9 @@ bool ZarrDetectionLoader::loadChaserStatesInterpolated(
         record.target_camera_x = target_camera_x[i];
         record.target_camera_y = target_camera_y[i];
         record.has_camera_coords = has_camera_coords[i] != 0;
+        applyChaserCoordinateTransformToRecord(data_.chaser_transform, record);
+        applyChaserColorMetadataToRecord(data_, record);
+        applyChaserBehaviorMetadataToRecord(data_, record);
         data_.chaser_states_interpolated.push_back(record);
     }
 
@@ -1680,18 +2564,84 @@ std::string ZarrDetectionLoader::formatStimulusEvent(
     return label;
 }
 
+void ZarrDetectionLoader::clearStimulusEventTimelineCache() {
+    data_.stimulus_event_labels.clear();
+    data_.stimulus_event_timeline.clear();
+    ++data_.stimulus_event_timeline_generation;
+}
+
+void ZarrDetectionLoader::rebuildStimulusEventTimelineCache(
+    const std::vector<int32_t>* stimulus_to_camera_map) {
+    data_.stimulus_event_labels.clear();
+    data_.stimulus_event_timeline.clear();
+    if (!data_.has_stimulus_events) {
+        ++data_.stimulus_event_timeline_generation;
+        return;
+    }
+
+    data_.stimulus_event_labels.reserve(data_.stimulus_events.size());
+    data_.stimulus_event_timeline.reserve(data_.stimulus_events.size());
+    for (size_t idx = 0; idx < data_.stimulus_events.size(); ++idx) {
+        const auto& entry = data_.stimulus_events[idx];
+        int32_t camera_frame = entry.camera_frame_id;
+        if (camera_frame < 0 && stimulus_to_camera_map != nullptr &&
+            entry.stimulus_frame_num >= 0) {
+            const auto frame_index =
+                static_cast<size_t>(entry.stimulus_frame_num);
+            if (frame_index < stimulus_to_camera_map->size()) {
+                camera_frame = (*stimulus_to_camera_map)[frame_index];
+            }
+        }
+
+        const std::string label = formatStimulusEvent(entry);
+        data_.stimulus_event_labels.push_back(label);
+
+        ZarrDetectionData::StimulusEventSummary summary;
+        summary.source_event_index = idx;
+        summary.stimulus_frame_num = entry.stimulus_frame_num;
+        summary.camera_frame_id = camera_frame;
+        summary.event_type_id = entry.event_type_id;
+        summary.label = label;
+        data_.stimulus_event_timeline.push_back(std::move(summary));
+    }
+
+    std::sort(data_.stimulus_event_timeline.begin(),
+              data_.stimulus_event_timeline.end(),
+              [](const ZarrDetectionData::StimulusEventSummary& a,
+                 const ZarrDetectionData::StimulusEventSummary& b) {
+                  if (a.stimulus_frame_num != b.stimulus_frame_num) {
+                      return a.stimulus_frame_num < b.stimulus_frame_num;
+                  }
+                  if (a.camera_frame_id != b.camera_frame_id) {
+                      return a.camera_frame_id < b.camera_frame_id;
+                  }
+                  if (a.event_type_id != b.event_type_id) {
+                      return a.event_type_id < b.event_type_id;
+                  }
+                  return a.source_event_index < b.source_event_index;
+              });
+    ++data_.stimulus_event_timeline_generation;
+}
+
 std::vector<std::string> ZarrDetectionLoader::getStimulusEventsForFrame(
     size_t frame_id) const {
     std::vector<std::string> result;
     if (!data_.has_stimulus_events) {
         return result;
     }
+    auto append_label = [&](size_t idx) {
+        if (idx >= data_.stimulus_events.size()) {
+            return;
+        }
+        if (idx < data_.stimulus_event_labels.size()) {
+            result.push_back(data_.stimulus_event_labels[idx]);
+            return;
+        }
+        result.push_back(formatStimulusEvent(data_.stimulus_events[idx]));
+    };
     if (frame_id < data_.stimulus_events_by_camera_frame.size()) {
         for (size_t idx : data_.stimulus_events_by_camera_frame[frame_id]) {
-            if (idx >= data_.stimulus_events.size()) {
-                continue;
-            }
-            result.push_back(formatStimulusEvent(data_.stimulus_events[idx]));
+            append_label(idx);
         }
     }
     if (!result.empty()) {
@@ -1699,108 +2649,53 @@ std::vector<std::string> ZarrDetectionLoader::getStimulusEventsForFrame(
     }
     if (frame_id < data_.stimulus_events_by_frame.size()) {
         for (size_t idx : data_.stimulus_events_by_frame[frame_id]) {
-            if (idx >= data_.stimulus_events.size()) {
-                continue;
-            }
-            result.push_back(formatStimulusEvent(data_.stimulus_events[idx]));
+            append_label(idx);
         }
     }
     return result;
 }
 
-std::vector<ZarrDetectionLoader::StimulusEventSummary>
+const std::vector<ZarrDetectionLoader::StimulusEventSummary>&
 ZarrDetectionLoader::getStimulusEventTimeline() const {
-    std::vector<StimulusEventSummary> result;
-    if (!data_.has_stimulus_events) {
-        return result;
+    return data_.stimulus_event_timeline;
+}
+
+const ZarrDetectionData::StimulusStep*
+ZarrDetectionLoader::getStimulusStepForFrame(int32_t camera_frame) const {
+    if (camera_frame < 0 || data_.stimulus_steps.empty()) {
+        return nullptr;
     }
 
-    result.reserve(data_.stimulus_events.size());
-    for (const auto& entry : data_.stimulus_events) {
-        StimulusEventSummary summary;
-        summary.stimulus_frame_num = entry.stimulus_frame_num;
-        summary.camera_frame_id = entry.camera_frame_id;
-        summary.event_type_id = entry.event_type_id;
-        summary.label = formatStimulusEvent(entry);
-        result.push_back(std::move(summary));
+    // Step boundaries can share a frame at handoff points. Prefer the later
+    // step when a frame is both the previous end and next start.
+    for (auto it = data_.stimulus_steps.rbegin();
+         it != data_.stimulus_steps.rend();
+         ++it) {
+        if (it->start_camera_frame < 0 || it->end_camera_frame < 0) {
+            continue;
+        }
+        if (camera_frame >= it->start_camera_frame &&
+            camera_frame <= it->end_camera_frame) {
+            return &(*it);
+        }
     }
-
-    std::sort(result.begin(), result.end(),
-              [](const StimulusEventSummary& a,
-                 const StimulusEventSummary& b) {
-                  if (a.stimulus_frame_num == b.stimulus_frame_num) {
-                      return a.event_type_id < b.event_type_id;
-                  }
-                  return a.stimulus_frame_num < b.stimulus_frame_num;
-              });
-    return result;
+    return nullptr;
 }
 
 bool ZarrDetectionLoader::hasStimulusFrameMapping() const {
-    if (!data_.has_stimulus_alignment_data) {
-        return false;
-    }
-    const auto& interp = data_.latest_interpolation;
-    return interp.has_direct_stimulus_lookup ||
-           !interp.camera_to_metadata_index_corrected.empty() ||
-           !interp.camera_to_metadata_index.empty();
+    return crimson::zarr::HasStimulusMapping(StimulusAlignment(data_));
+}
+
+size_t ZarrDetectionLoader::getStimulusFrameMappingCount() const {
+    return crimson::zarr::StimulusCameraFrameCount(StimulusAlignment(data_));
 }
 
 bool ZarrDetectionLoader::hasCorrectedStimulusFrameMapping() const {
-    if (!data_.has_stimulus_alignment_data) {
-        return false;
-    }
-    const auto& interp = data_.latest_interpolation;
-    if (interp.has_direct_stimulus_lookup &&
-        !interp.camera_to_stimulus_frame_corrected.empty()) {
-        return true;
-    }
-    return interp.frame_metadata_corrected_loaded &&
-           !interp.camera_to_metadata_index_corrected.empty() &&
-           !interp.frame_metadata_stimulus_frames_corrected.empty();
+    return crimson::zarr::HasCorrectedStimulusMapping(StimulusAlignment(data_));
 }
 
 int64_t ZarrDetectionLoader::getStimulusCameraFrameOffset() const {
     return data_.stimulus_camera_frame_offset;
-}
-
-std::optional<int32_t> ZarrDetectionLoader::resolveStimulusMetadataIndex(
-    const std::vector<int32_t>& mapping,
-    int32_t camera_frame) const {
-    if (mapping.empty() || camera_frame < 0) {
-        return std::nullopt;
-    }
-    size_t index = static_cast<size_t>(camera_frame);
-    if (index >= mapping.size()) {
-        return std::nullopt;
-    }
-    int32_t metadata_index = mapping[index];
-    if (metadata_index < 0) {
-        return std::nullopt;
-    }
-    return metadata_index;
-}
-
-std::optional<int32_t> ZarrDetectionLoader::resolveStimulusFrame(
-    const std::vector<int32_t>& mapping,
-    const std::vector<int32_t>& frame_numbers,
-    int32_t camera_frame) const {
-    if (frame_numbers.empty()) {
-        return std::nullopt;
-    }
-    auto metadata_index = resolveStimulusMetadataIndex(mapping, camera_frame);
-    if (!metadata_index) {
-        return std::nullopt;
-    }
-    size_t meta_idx = static_cast<size_t>(*metadata_index);
-    if (meta_idx >= frame_numbers.size()) {
-        return std::nullopt;
-    }
-    int32_t stimulus_frame = frame_numbers[meta_idx];
-    if (stimulus_frame < 0) {
-        return std::nullopt;
-    }
-    return stimulus_frame;
 }
 
 std::optional<int32_t> ZarrDetectionLoader::resolveDirectStimulusFrame(
@@ -1824,216 +2719,644 @@ std::optional<int32_t> ZarrDetectionLoader::resolveDirectStimulusFrame(
 std::optional<int32_t>
 ZarrDetectionLoader::getStimulusMetadataIndexForCameraFrame(int32_t camera_frame,
                                                             bool prefer_corrected) const {
-    if (!hasStimulusFrameMapping() || camera_frame < 0) {
-        return std::nullopt;
-    }
-    const auto& interp = data_.latest_interpolation;
-    if (prefer_corrected) {
-        if (auto corrected =
-                resolveStimulusMetadataIndex(interp.camera_to_metadata_index_corrected,
-                                             camera_frame)) {
-            return corrected;
-        }
-    }
-    return resolveStimulusMetadataIndex(interp.camera_to_metadata_index, camera_frame);
+    return crimson::zarr::ResolveStimulusMetadataIndex(
+        StimulusAlignment(data_), camera_frame,
+        StimulusPreference(prefer_corrected));
 }
 
 std::optional<int32_t>
 ZarrDetectionLoader::getStimulusFrameForCameraFrame(int32_t camera_frame,
                                                     bool prefer_corrected) const {
-    const auto& interp = data_.latest_interpolation;
-    if (prefer_corrected) {
-        if (auto direct = resolveDirectStimulusFrame(camera_frame)) {
-            return direct;
-        }
-    }
-    if (prefer_corrected) {
-        if (interp.frame_metadata_corrected_loaded) {
-            if (auto corrected =
-                    resolveStimulusFrame(interp.camera_to_metadata_index_corrected,
-                                         interp.frame_metadata_stimulus_frames_corrected,
-                                         camera_frame)) {
-                return corrected;
-            }
-        }
-    }
-    if (!interp.frame_metadata_loaded) {
-        return std::nullopt;
-    }
-    return resolveStimulusFrame(interp.camera_to_metadata_index,
-                                interp.frame_metadata_stimulus_frames,
-                                camera_frame);
+    return getStimulusFrameResolution(camera_frame,
+                                      StimulusPreference(prefer_corrected))
+        .stimulus_frame;
+}
+
+crimson::zarr::StimulusFrameResolution
+ZarrDetectionLoader::getStimulusFrameResolution(
+    int32_t camera_frame,
+    crimson::zarr::StimulusMappingPreference preference) const {
+    return crimson::zarr::ResolveStimulusFrame(
+        StimulusAlignment(data_), camera_frame, preference);
 }
 
 std::optional<int32_t>
 ZarrDetectionLoader::getCameraFrameForStimulusFrame(int32_t stimulus_frame,
                                                     bool prefer_corrected) const {
-    if (!hasStimulusFrameMapping() || stimulus_frame < 0) {
-        return std::nullopt;
-    }
-
-    const auto& interp = data_.latest_interpolation;
-
-    auto resolve_from_direct = [&](const std::vector<int32_t>& direct)
-            -> std::optional<int32_t> {
-        if (direct.empty()) {
-            return std::nullopt;
-        }
-        for (size_t camera_idx = 0; camera_idx < direct.size(); ++camera_idx) {
-            if (direct[camera_idx] == stimulus_frame) {
-                return static_cast<int32_t>(camera_idx);
-            }
-        }
-        return std::nullopt;
-    };
-
-    auto resolve_from_metadata = [&](const std::vector<int32_t>& mapping,
-                                     const std::vector<int32_t>& frame_numbers)
-            -> std::optional<int32_t> {
-        if (mapping.empty() || frame_numbers.empty()) {
-            return std::nullopt;
-        }
-        for (size_t camera_idx = 0; camera_idx < mapping.size(); ++camera_idx) {
-            int32_t metadata_idx = mapping[camera_idx];
-            if (metadata_idx < 0) {
-                continue;
-            }
-            size_t meta_index = static_cast<size_t>(metadata_idx);
-            if (meta_index >= frame_numbers.size()) {
-                continue;
-            }
-            if (frame_numbers[meta_index] == stimulus_frame) {
-                return static_cast<int32_t>(camera_idx);
-            }
-        }
-        return std::nullopt;
-    };
-
-    if (prefer_corrected) {
-        if (interp.has_direct_stimulus_lookup) {
-            if (auto camera = resolve_from_direct(
-                    interp.camera_to_stimulus_frame_corrected)) {
-                return camera;
-            }
-        }
-        if (interp.frame_metadata_corrected_loaded) {
-            if (auto camera = resolve_from_metadata(
-                    interp.camera_to_metadata_index_corrected,
-                    interp.frame_metadata_stimulus_frames_corrected)) {
-                return camera;
-            }
-        }
-    }
-
-    if (auto camera = resolve_from_metadata(interp.camera_to_metadata_index,
-                                            interp.frame_metadata_stimulus_frames)) {
-        return camera;
-    }
-
-    return std::nullopt;
+    return crimson::zarr::ResolveCameraFrameForStimulus(
+        StimulusAlignment(data_), stimulus_frame,
+        StimulusPreference(prefer_corrected));
 }
 
 std::optional<int32_t> ZarrDetectionLoader::getFirstCameraFrameWithStimulus(
     bool prefer_corrected) const {
-    if (!hasStimulusFrameMapping()) {
-        return std::nullopt;
-    }
-    const auto& interp = data_.latest_interpolation;
-    if (prefer_corrected && interp.has_direct_stimulus_lookup) {
-        if (interp.first_camera_frame_with_stimulus_corrected >= 0) {
-            return interp.first_camera_frame_with_stimulus_corrected;
-        }
-        const auto& direct = interp.camera_to_stimulus_frame_corrected;
-        for (size_t i = 0; i < direct.size(); ++i) {
-            if (direct[i] >= 0) {
-                return static_cast<int32_t>(i);
-            }
-        }
-    }
-    auto find_first = [](const std::vector<int32_t>& mapping,
-                         int32_t cached) -> std::optional<int32_t> {
-        if (mapping.empty()) {
-            return std::nullopt;
-        }
-        if (cached >= 0) {
-            return cached;
-        }
-        for (size_t i = 0; i < mapping.size(); ++i) {
-            if (mapping[i] >= 0) {
-                return static_cast<int32_t>(i);
-            }
-        }
-        return std::nullopt;
-    };
-
-    if (prefer_corrected) {
-        if (auto corrected = find_first(interp.camera_to_metadata_index_corrected,
-                                        interp.first_camera_frame_with_stimulus_corrected)) {
-            return corrected;
-        }
-    }
-    return find_first(interp.camera_to_metadata_index,
-                      interp.first_camera_frame_with_stimulus);
+    return crimson::zarr::FirstCameraFrameWithStimulus(
+        StimulusAlignment(data_), StimulusPreference(prefer_corrected));
 }
 
 std::optional<int32_t> ZarrDetectionLoader::getFirstStimulusFrameNumber(
     bool prefer_corrected) const {
-    const auto& interp = data_.latest_interpolation;
-    if (prefer_corrected && interp.has_direct_stimulus_lookup) {
-        if (interp.first_stimulus_frame_corrected >= 0) {
-            return interp.first_stimulus_frame_corrected;
-        }
-        const auto& direct = interp.camera_to_stimulus_frame_corrected;
-        for (int32_t value : direct) {
-            if (value >= 0) {
-                return value;
-            }
+    return crimson::zarr::FirstStimulusFrame(
+        StimulusAlignment(data_), StimulusPreference(prefer_corrected));
+}
+
+bool ZarrDetectionLoader::loadChaserDistancePolarData(
+    const ts::kvstore::KvStore& store) {
+    data_.chaser_distance_polar = ZarrDetectionData::ChaserDistancePolarData{};
+
+    std::string run_name;
+    std::string run_selection;
+    if (auto group_attrs =
+            readAttrsAny(store, "analysis/chaser_distance_runs")) {
+        run_name = latestCompleteFirstRunName(*group_attrs, &run_selection);
+    }
+    if (run_name.empty()) {
+        auto candidates = collect_runs_fs(root_path_,
+                                          "analysis/chaser_distance_runs",
+                                          {"frames/camera_frame_id",
+                                           "distances/distance_mm"});
+        if (!candidates.empty()) {
+            run_name = candidates.back();
+            run_selection = "lexicographic_compatibility_fallback";
         }
     }
-    auto resolve_first = [](const std::vector<int32_t>& frame_numbers,
-                            int32_t cached_frame,
-                            int32_t cached_meta,
-                            const std::vector<int32_t>& mapping) -> std::optional<int32_t> {
-        if (frame_numbers.empty()) {
-            return std::nullopt;
+    if (run_name.empty()) {
+        return false;
+    }
+
+    const std::string run_base =
+        "analysis/chaser_distance_runs/" + run_name + "/";
+    auto run_attrs = readAttrsAny(store, run_base);
+
+    std::string component_name;
+    std::string component_selection;
+    const std::string egocentric_group = run_base + "egocentric_bearing";
+    if (auto ego_attrs = readAttrsAny(store, egocentric_group)) {
+        component_name =
+            latestCompleteFirstRunName(*ego_attrs, &component_selection);
+    }
+    if (component_name.empty()) {
+        auto candidates = collect_runs_fs(
+            root_path_,
+            "analysis/chaser_distance_runs/" + run_name + "/egocentric_bearing",
+            {"per_chaser/bearing_deg",
+             "per_chaser/distance_mm",
+             "per_chaser/valid"});
+        if (!candidates.empty()) {
+            component_name = candidates.back();
+            component_selection =
+                "lexicographic_compatibility_fallback";
         }
-        if (cached_frame >= 0) {
-            return cached_frame;
-        }
-        int32_t meta_idx = cached_meta;
-        if (meta_idx < 0 && !mapping.empty()) {
-            for (size_t i = 0; i < mapping.size(); ++i) {
-                if (mapping[i] >= 0) {
-                    meta_idx = mapping[i];
-                    break;
+    }
+    if (component_name.empty()) {
+        std::cout << "  [ChaserDistancePolar] Run '" << run_name
+                  << "' has no persisted egocentric_bearing component"
+                  << std::endl;
+        return false;
+    }
+
+    const std::string component_base =
+        run_base + "egocentric_bearing/" + component_name + "/";
+    auto component_attrs = readAttrsAny(store, component_base);
+
+    auto readFloat2D = [&](const std::string& path,
+                           std::vector<float>& out,
+                           size_t& rows_out,
+                           size_t& cols_out) -> bool {
+        auto attempt = [&](auto type_token) -> bool {
+            using Source = decltype(type_token);
+            auto open_result = openArrayAny<Source, 2>(store, path, context_);
+            if (!open_result.ok()) {
+                return false;
+            }
+            auto array_result = ts::Read(open_result.value()).result();
+            if (!array_result.ok()) {
+                return false;
+            }
+            auto array = array_result.value();
+            if (array.rank() != 2 || array.shape()[0] < 0 ||
+                array.shape()[1] <= 0) {
+                return false;
+            }
+            rows_out = static_cast<size_t>(array.shape()[0]);
+            cols_out = static_cast<size_t>(array.shape()[1]);
+            out.assign(rows_out * cols_out,
+                       std::numeric_limits<float>::quiet_NaN());
+            for (size_t row = 0; row < rows_out; ++row) {
+                for (size_t col = 0; col < cols_out; ++col) {
+                    out[row * cols_out + col] =
+                        static_cast<float>(array(static_cast<ts::Index>(row),
+                                                 static_cast<ts::Index>(col)));
                 }
             }
-        }
-        if (meta_idx >= 0 &&
-            static_cast<size_t>(meta_idx) < frame_numbers.size() &&
-            frame_numbers[static_cast<size_t>(meta_idx)] >= 0) {
-            return frame_numbers[static_cast<size_t>(meta_idx)];
-        }
-        return std::nullopt;
+            return true;
+        };
+        return attempt(float{}) || attempt(double{});
     };
 
-    if (prefer_corrected && interp.frame_metadata_corrected_loaded) {
-        if (auto corrected = resolve_first(
-                interp.frame_metadata_stimulus_frames_corrected,
-                interp.first_stimulus_frame_corrected,
-                interp.first_metadata_index_with_stimulus_corrected,
-                interp.camera_to_metadata_index_corrected)) {
-            return corrected;
+    auto readBool2D = [&](const std::string& path,
+                          std::vector<uint8_t>& out,
+                          size_t& rows_out,
+                          size_t& cols_out) -> bool {
+        auto open_result = openArrayAny<bool, 2>(store, path, context_);
+        if (!open_result.ok()) {
+            return false;
+        }
+        auto array_result = ts::Read(open_result.value()).result();
+        if (!array_result.ok()) {
+            return false;
+        }
+        auto array = array_result.value();
+        if (array.rank() != 2 || array.shape()[0] < 0 ||
+            array.shape()[1] <= 0) {
+            return false;
+        }
+        rows_out = static_cast<size_t>(array.shape()[0]);
+        cols_out = static_cast<size_t>(array.shape()[1]);
+        out.assign(rows_out * cols_out, uint8_t{0});
+        for (size_t row = 0; row < rows_out; ++row) {
+            for (size_t col = 0; col < cols_out; ++col) {
+                out[row * cols_out + col] =
+                    array(static_cast<ts::Index>(row),
+                          static_cast<ts::Index>(col))
+                        ? uint8_t{1}
+                        : uint8_t{0};
+            }
+        }
+        return true;
+    };
+
+    ZarrDetectionData::ChaserDistancePolarData polar;
+    polar.run_name = run_name;
+    polar.component_name = component_name;
+    polar.run_selection = run_selection;
+    polar.component_selection = component_selection;
+    if (run_attrs.has_value()) {
+        polar.coordinate_frame =
+            stimulusJsonStringAttr(*run_attrs, "coordinate_frame");
+    }
+    if (component_attrs.has_value()) {
+        polar.angle_convention =
+            stimulusJsonStringAttr(*component_attrs, "angle_convention");
+        if (polar.angle_convention.empty() &&
+            component_attrs->contains("parameters") &&
+            (*component_attrs)["parameters"].is_object()) {
+            polar.angle_convention = stimulusJsonStringAttr(
+                (*component_attrs)["parameters"], "angle_convention");
         }
     }
-    if (!interp.frame_metadata_loaded) {
-        return std::nullopt;
+
+    if (!readInt64Array(store,
+                        component_base + "frames/camera_frame_id",
+                        polar.camera_frame_ids)) {
+        if (!readInt64Array(store,
+                            run_base + "frames/camera_frame_id",
+                            polar.camera_frame_ids)) {
+            std::cout << "  [ChaserDistancePolar] Missing camera_frame_id for "
+                      << run_name << " / " << component_name << std::endl;
+            return false;
+        }
     }
-    return resolve_first(interp.frame_metadata_stimulus_frames,
-                         interp.first_stimulus_frame,
-                         interp.first_metadata_index_with_stimulus,
-                         interp.camera_to_metadata_index);
+    if (polar.camera_frame_ids.empty()) {
+        return false;
+    }
+
+    if (!readInt32Array(store,
+                        component_base + "per_chaser/chaser_index",
+                        polar.chaser_indices)) {
+        if (!readInt32Array(store,
+                            run_base + "chasers/chaser_index",
+                            polar.chaser_indices)) {
+            std::cout << "  [ChaserDistancePolar] Missing chaser_index for "
+                      << run_name << " / " << component_name << std::endl;
+            return false;
+        }
+    }
+    if (polar.chaser_indices.empty()) {
+        return false;
+    }
+
+    size_t bearing_rows = 0;
+    size_t bearing_cols = 0;
+    size_t distance_rows = 0;
+    size_t distance_cols = 0;
+    size_t valid_rows = 0;
+    size_t valid_cols = 0;
+    if (!readFloat2D(component_base + "per_chaser/bearing_deg",
+                     polar.bearing_deg,
+                     bearing_rows,
+                     bearing_cols) ||
+        !readFloat2D(component_base + "per_chaser/distance_mm",
+                     polar.distance_mm,
+                     distance_rows,
+                     distance_cols) ||
+        !readBool2D(component_base + "per_chaser/valid",
+                    polar.valid,
+                    valid_rows,
+                    valid_cols)) {
+        std::cout << "  [ChaserDistancePolar] Could not read persisted "
+                  << "egocentric arrays for " << run_name << " / "
+                  << component_name << std::endl;
+        return false;
+    }
+
+    polar.row_count = polar.camera_frame_ids.size();
+    polar.chaser_count = polar.chaser_indices.size();
+    const bool shapes_match =
+        bearing_rows == polar.row_count &&
+        distance_rows == polar.row_count &&
+        valid_rows == polar.row_count &&
+        bearing_cols == polar.chaser_count &&
+        distance_cols == polar.chaser_count &&
+        valid_cols == polar.chaser_count;
+    if (!shapes_match) {
+        std::cout << "  [ChaserDistancePolar] Shape mismatch for "
+                  << run_name << " / " << component_name
+                  << " frames=" << polar.row_count
+                  << " chasers=" << polar.chaser_count
+                  << " bearing=" << bearing_rows << "x" << bearing_cols
+                  << " distance=" << distance_rows << "x" << distance_cols
+                  << " valid=" << valid_rows << "x" << valid_cols
+                  << std::endl;
+        return false;
+    }
+
+    polar.row_by_camera_frame.reserve(polar.camera_frame_ids.size());
+    for (size_t row = 0; row < polar.camera_frame_ids.size(); ++row) {
+        polar.row_by_camera_frame.emplace(polar.camera_frame_ids[row], row);
+    }
+
+    auto component_hex_colors =
+        component_attrs.has_value()
+            ? collectChaserHexColorsFromSummary(*component_attrs)
+            : std::unordered_map<int32_t, std::array<float, 4>>{};
+    polar.chaser_rgba.resize(polar.chaser_count);
+    polar.chaser_color_provenance.resize(polar.chaser_count);
+    for (size_t col = 0; col < polar.chaser_count; ++col) {
+        const int32_t chaser_index = polar.chaser_indices[col];
+        auto protocol_color = data_.chaser_rgba_by_index.find(chaser_index);
+        if (protocol_color != data_.chaser_rgba_by_index.end()) {
+            polar.chaser_rgba[col] = protocol_color->second;
+            polar.chaser_color_provenance[col] = "stimulus_protocol";
+            continue;
+        }
+        auto component_color = component_hex_colors.find(chaser_index);
+        if (component_color != component_hex_colors.end()) {
+            polar.chaser_rgba[col] = component_color->second;
+            polar.chaser_color_provenance[col] = "component_summary";
+            continue;
+        }
+        polar.chaser_rgba[col] = fallbackChaserColor(chaser_index);
+        polar.chaser_color_provenance[col] = "fixed_fallback_palette";
+    }
+
+    polar.radial_max_mm = 0.0f;
+    for (size_t i = 0; i < polar.distance_mm.size(); ++i) {
+        if (i >= polar.valid.size() || polar.valid[i] == 0) {
+            continue;
+        }
+        const float value = polar.distance_mm[i];
+        if (std::isfinite(value) && value > polar.radial_max_mm) {
+            polar.radial_max_mm = value;
+        }
+    }
+    if (!(std::isfinite(polar.radial_max_mm) && polar.radial_max_mm > 0.0f)) {
+        polar.radial_max_mm = 1.0f;
+    } else {
+        polar.radial_max_from_data = true;
+    }
+
+    polar.loaded = true;
+    data_.chaser_distance_polar = std::move(polar);
+    std::cout << "  [ChaserDistancePolar] Loaded run '" << run_name
+              << "' component '" << component_name << "' ("
+              << data_.chaser_distance_polar.row_count << " frames, "
+              << data_.chaser_distance_polar.chaser_count
+              << " chaser columns, max radius "
+              << data_.chaser_distance_polar.radial_max_mm << " mm)"
+              << std::endl;
+    return true;
 }
+
+ZarrDetectionLoader::ChaserDistancePolarFrame
+ZarrDetectionLoader::getChaserDistancePolarFrame(
+    int64_t camera_frame) const {
+    ChaserDistancePolarFrame frame;
+    const auto& polar = data_.chaser_distance_polar;
+    if (!polar.loaded) {
+        return frame;
+    }
+
+    frame.available = true;
+    frame.camera_frame_id = camera_frame;
+    frame.run_name = polar.run_name;
+    frame.component_name = polar.component_name;
+    frame.radial_max_mm = polar.radial_max_mm;
+
+    auto row_it = polar.row_by_camera_frame.find(camera_frame);
+    if (row_it == polar.row_by_camera_frame.end()) {
+        return frame;
+    }
+    const size_t row = row_it->second;
+    for (size_t col = 0; col < polar.chaser_count; ++col) {
+        const size_t offset = row * polar.chaser_count + col;
+        if (offset >= polar.valid.size() || polar.valid[offset] == 0 ||
+            offset >= polar.distance_mm.size() ||
+            offset >= polar.bearing_deg.size()) {
+            continue;
+        }
+        const float distance = polar.distance_mm[offset];
+        const float bearing = polar.bearing_deg[offset];
+        if (!std::isfinite(distance) || !std::isfinite(bearing)) {
+            continue;
+        }
+        ChaserDistancePolarPoint point;
+        point.chaser_index =
+            col < polar.chaser_indices.size() ? polar.chaser_indices[col]
+                                              : static_cast<int32_t>(col);
+        point.distance_mm = distance;
+        point.bearing_deg = bearing;
+        if (col < polar.chaser_rgba.size()) {
+            point.rgba = polar.chaser_rgba[col];
+            point.has_rgba = true;
+        }
+        if (col < polar.chaser_color_provenance.size()) {
+            point.color_provenance = polar.chaser_color_provenance[col];
+        }
+        frame.points.push_back(point);
+    }
+    return frame;
+}
+
+namespace crimson::zarr {
+namespace {
+
+polar::ChaserDistancePolarSelectionProvenance selectionProvenance(
+    const std::string& value) {
+    using Provenance = polar::ChaserDistancePolarSelectionProvenance;
+    if (value == "latest_complete") {
+        return Provenance::LatestComplete;
+    }
+    if (value == "latest_completed") {
+        return Provenance::LatestCompleted;
+    }
+    if (value == "latest_success") {
+        return Provenance::LatestSuccess;
+    }
+    if (value == "latest") {
+        return Provenance::Latest;
+    }
+    if (value == "lexicographic_compatibility_fallback") {
+        return Provenance::LexicographicCompatibilityFallback;
+    }
+    return Provenance::Unspecified;
+}
+
+polar::ChaserDistancePolarColorProvenance colorProvenance(
+    const std::string& value) {
+    using Provenance = polar::ChaserDistancePolarColorProvenance;
+    if (value == "stimulus_protocol") {
+        return Provenance::StimulusProtocol;
+    }
+    if (value == "component_summary") {
+        return Provenance::ComponentSummary;
+    }
+    if (value == "fixed_fallback_palette") {
+        return Provenance::FixedFallbackPalette;
+    }
+    return Provenance::Unspecified;
+}
+
+class LegacyChaserDistancePolarRepository final
+    : public polar::ChaserDistancePolarRepository {
+public:
+    explicit LegacyChaserDistancePolarRepository(
+        const ZarrDetectionLoader& loader)
+        : loader_(&loader) {
+        descriptor_.provenance.source_group =
+            std::string(polar::kChaserDistancePolarSourceGroup);
+        if (!loader_->hasChaserDistancePolarData()) {
+            descriptor_.availability =
+                polar::ChaserDistancePolarAvailability::DatasetUnavailable;
+            descriptor_.error = "chaser-distance polar group is unavailable";
+            return;
+        }
+
+        descriptor_.availability = polar::ChaserDistancePolarAvailability::Ready;
+        descriptor_.provenance.run_name =
+            loader_->getChaserDistancePolarRunName();
+        descriptor_.provenance.component_name =
+            loader_->getChaserDistancePolarComponentName();
+        descriptor_.provenance.run_selection = selectionProvenance(
+            loader_->getChaserDistancePolarRunSelection());
+        descriptor_.provenance.component_selection = selectionProvenance(
+            loader_->getChaserDistancePolarComponentSelection());
+        descriptor_.row_count = loader_->getChaserDistancePolarRowCount();
+        descriptor_.chaser_count =
+            loader_->getChaserDistancePolarChaserCount();
+        descriptor_.distance_unit =
+            polar::ChaserDistancePolarDistanceUnit::Millimeters;
+        descriptor_.coordinate_frame =
+            loader_->getChaserDistancePolarCoordinateFrame();
+        descriptor_.angle_convention =
+            loader_->getChaserDistancePolarAngleConvention();
+        descriptor_.dataset_global_max_distance_mm =
+            loader_->hasChaserDistancePolarDataRadialMax()
+                ? static_cast<double>(
+                      loader_->getChaserDistancePolarRadialMaxMm())
+                : 0.0;
+        descriptor_ = polar::normalizeChaserDistancePolarDescriptor(
+            std::move(descriptor_));
+    }
+
+    const polar::ChaserDistancePolarDescriptor& descriptor() const override {
+        return descriptor_;
+    }
+
+    polar::ChaserDistancePolarFrameSample resolveCameraFrame(
+        int64_t camera_frame) const override {
+        if (!descriptor_.ready()) {
+            return polar::makeChaserDistancePolarFrameSample(
+                descriptor_, camera_frame, std::nullopt, {});
+        }
+        if (!loader_->hasChaserDistancePolarCameraFrame(camera_frame)) {
+            return polar::makeChaserDistancePolarFrameSample(
+                descriptor_, camera_frame, std::nullopt, {});
+        }
+
+        const auto legacy =
+            loader_->getChaserDistancePolarFrame(camera_frame);
+        if (!legacy.available) {
+            return polar::makeChaserDistancePolarFrameSample(
+                descriptor_, camera_frame, camera_frame, {},
+                "legacy loader could not resolve the exact polar frame");
+        }
+
+        std::vector<polar::ChaserDistancePolarPoint> points;
+        points.reserve(descriptor_.chaser_count);
+        for (const auto& source : legacy.points) {
+            polar::ChaserDistancePolarPoint point;
+            point.chaser_index = source.chaser_index;
+            point.distance_mm = source.distance_mm;
+            point.bearing_degrees = source.bearing_deg;
+            point.valid = true;
+            if (source.has_rgba) {
+                point.color.rgba = {source.rgba[0], source.rgba[1],
+                                    source.rgba[2], source.rgba[3]};
+                point.color.provenance =
+                    colorProvenance(source.color_provenance);
+            } else {
+                point.color = polar::resolveChaserDistancePolarColor(
+                    source.chaser_index, std::nullopt, std::nullopt);
+            }
+            points.push_back(std::move(point));
+        }
+        while (points.size() < descriptor_.chaser_count) {
+            points.emplace_back();
+        }
+        return polar::makeChaserDistancePolarFrameSample(
+            descriptor_, camera_frame, camera_frame, std::move(points));
+    }
+
+private:
+    const ZarrDetectionLoader* loader_ = nullptr;
+    polar::ChaserDistancePolarDescriptor descriptor_;
+};
+
+timeline::StimulusContextStep portableStimulusStep(
+    const ZarrDetectionData::StimulusStep& source) {
+    timeline::StimulusContextStep step;
+    step.step_index = source.step_index;
+    step.step_name = source.step_name;
+    step.stimulus_mode_id = source.stimulus_mode_id;
+    step.stimulus_mode = source.stimulus_mode;
+    step.start_camera_frame = source.start_camera_frame;
+    step.end_camera_frame = source.end_camera_frame;
+    step.duration_s = source.duration_s;
+    step.raw_protocol_params_json = source.raw_protocol_params_json;
+
+    step.moving_grating.present = source.moving_grating.present;
+    step.moving_grating.grating_direction_camera_deg =
+        source.moving_grating.grating_direction_camera_deg;
+    step.moving_grating.orientation_degrees_authored =
+        source.moving_grating.orientation_degrees_authored;
+    step.moving_grating.camera_to_projector_offset_deg =
+        source.moving_grating.camera_to_projector_offset_deg;
+    step.moving_grating.direction_mapping_status =
+        source.moving_grating.direction_mapping_status;
+    step.moving_grating.direction_mapping_validated =
+        source.moving_grating.direction_mapping_validated;
+    step.moving_grating.has_direction_mapping_validated =
+        source.moving_grating.has_direction_mapping_validated;
+    step.moving_grating.speed_mm_s = source.moving_grating.speed_mm_s;
+    step.moving_grating.temporal_frequency_hz =
+        source.moving_grating.temporal_frequency_hz;
+
+    step.concentric_grating.present = source.concentric_grating.present;
+    step.concentric_grating.stimulus_role =
+        source.concentric_grating.stimulus_role;
+    step.concentric_grating.radial_polarity_authored =
+        source.concentric_grating.radial_polarity_authored;
+    step.concentric_grating.radial_sign_authored =
+        source.concentric_grating.radial_sign_authored;
+    step.concentric_grating.radial_polarity_validated =
+        source.concentric_grating.radial_polarity_validated;
+    step.concentric_grating.has_radial_polarity_validated =
+        source.concentric_grating.has_radial_polarity_validated;
+    step.concentric_grating.center_x_px =
+        source.concentric_grating.center_x_px;
+    step.concentric_grating.center_y_px =
+        source.concentric_grating.center_y_px;
+    step.concentric_grating.center_x_mm =
+        source.concentric_grating.center_x_mm;
+    step.concentric_grating.center_y_mm =
+        source.concentric_grating.center_y_mm;
+    step.concentric_grating.target_radius_min_mm =
+        source.concentric_grating.target_radius_min_mm;
+    step.concentric_grating.target_radius_max_mm =
+        source.concentric_grating.target_radius_max_mm;
+    step.concentric_grating.speed_mm_s =
+        source.concentric_grating.speed_mm_s;
+    step.concentric_grating.temporal_frequency_hz =
+        source.concentric_grating.temporal_frequency_hz;
+    return step;
+}
+
+}  // namespace
+
+std::unique_ptr<polar::ChaserDistancePolarRepository>
+MakeLegacyChaserDistancePolarRepository(
+    const ZarrDetectionLoader& loader) {
+    return std::make_unique<LegacyChaserDistancePolarRepository>(loader);
+}
+
+std::unique_ptr<timeline::StimulusContextTimelineRepository>
+MakeLegacyStimulusContextTimelineRepository(
+    const ZarrDetectionLoader& loader) {
+    timeline::StimulusContextTimelineDescriptor descriptor;
+    descriptor.run_name = loader.getStimulusEventsRunName();
+    if (descriptor.run_name.empty()) {
+        descriptor.run_name = loader.getStimulusStepsRunName();
+    }
+    if (descriptor.run_name.empty()) {
+        descriptor.run_name = loader.getStimulusRunName();
+    }
+    descriptor.frame_count = loader.getTotalFrames();
+
+    const auto& event_type_names = loader.getStimulusEventTypeNames();
+    descriptor.event_types.reserve(event_type_names.size());
+    for (const auto& [id, name] : event_type_names) {
+        descriptor.event_types.push_back({id, name, 0});
+    }
+
+    std::unordered_map<size_t, const ZarrDetectionLoader::StimulusEventSummary*>
+        summaries;
+    for (const auto& summary : loader.getStimulusEventTimeline()) {
+        summaries.emplace(summary.source_event_index, &summary);
+    }
+
+    std::vector<timeline::StimulusContextEvent> events;
+    const auto& source_events = loader.getStimulusEventEntries();
+    events.reserve(source_events.size());
+    for (size_t index = 0; index < source_events.size(); ++index) {
+        const auto& source = source_events[index];
+        timeline::StimulusContextEvent event;
+        event.source_event_index = index;
+        event.stimulus_frame = source.stimulus_frame_num;
+        event.camera_frame = source.camera_frame_id;
+        event.timestamp_ns_session = source.timestamp_ns_session;
+        event.event_type_id = source.event_type_id;
+        event.name_or_context = source.name_or_context;
+        event.details_json = source.details_json;
+        const auto type = event_type_names.find(source.event_type_id);
+        if (type != event_type_names.end()) {
+            event.event_type_name = type->second;
+        }
+        const auto summary = summaries.find(index);
+        if (summary != summaries.end()) {
+            event.label = summary->second->label;
+        }
+        if (event.camera_frame < 0 && event.stimulus_frame >= 0 &&
+            event.stimulus_frame <= std::numeric_limits<int32_t>::max()) {
+            const auto camera = loader.getCameraFrameForStimulusFrame(
+                static_cast<int32_t>(event.stimulus_frame), true);
+            if (camera) {
+                event.camera_frame = *camera;
+            }
+        }
+        events.push_back(std::move(event));
+    }
+
+    std::vector<timeline::StimulusContextStep> steps;
+    steps.reserve(loader.getStimulusSteps().size());
+    for (const auto& source : loader.getStimulusSteps()) {
+        steps.push_back(portableStimulusStep(source));
+    }
+    return timeline::MakeStimulusContextTimelineRepository(
+        std::move(descriptor), std::move(events), std::move(steps));
+}
+
+}  // namespace crimson::zarr
 
 std::vector<ZarrDetectionLoader::ChaserBoundingBox>
 ZarrDetectionLoader::getChaserBoundingBoxesForFrame(size_t frame_id) const {
@@ -2141,11 +3464,24 @@ ZarrDetectionLoader::getChaserStatesForFrame(size_t frame_id) const {
         candidate.is_chasing = src.is_chasing != 0;
         candidate.timestamp_ns_session = src.timestamp_ns_session;
         candidate.texture_space = src.texture_space;
+        candidate.coordinate_frame = src.coordinate_frame;
+        candidate.coordinate_origin = src.coordinate_origin;
+        candidate.stimulus_canvas_offset_x = src.stimulus_canvas_offset_x;
+        candidate.stimulus_canvas_offset_y = src.stimulus_canvas_offset_y;
+        candidate.has_stimulus_canvas_offset = src.has_stimulus_canvas_offset;
         candidate.chaser_camera_x = src.chaser_camera_x;
         candidate.chaser_camera_y = src.chaser_camera_y;
         candidate.target_camera_x = src.target_camera_x;
         candidate.target_camera_y = src.target_camera_y;
         candidate.has_camera_coords = src.has_camera_coords;
+        candidate.chaser_rgba = src.chaser_rgba;
+        candidate.has_chaser_rgba = src.has_chaser_rgba;
+        candidate.behavior_mode = src.behavior_mode;
+        candidate.has_behavior_mode = src.has_behavior_mode;
+        candidate.enable_chase = src.enable_chase;
+        candidate.has_enable_chase = src.has_enable_chase;
+        candidate.enable_random_movement = src.enable_random_movement;
+        candidate.has_enable_random_movement = src.has_enable_random_movement;
 
         int32_t index_key = candidate.chaser_index;
         auto it = latest_by_index.find(index_key);
@@ -2177,6 +3513,10 @@ ZarrDetectionLoader::getChaserStatesForFrame(size_t frame_id) const {
                       << " stim=" << state.stimulus_frame_num
                       << " chaser=(" << state.chaser_pos_x << "," << state.chaser_pos_y << ")"
                       << " target=(" << state.target_pos_x << "," << state.target_pos_y << ")"
+                      << " frame='" << state.coordinate_frame << "'"
+                      << " origin='" << state.coordinate_origin << "'"
+                      << " canvas_offset=(" << state.stimulus_canvas_offset_x
+                      << "," << state.stimulus_canvas_offset_y << ")"
                       << " cam=(" << state.chaser_camera_x << "," << state.chaser_camera_y << ")"
                       << " has_cam=" << (state.has_camera_coords ? "Y" : "N")
                       << std::endl;
@@ -2199,6 +3539,13 @@ ZarrDetectionLoader::getChaserStatesForFrame(size_t frame_id) const {
                       << " is_chasing=" << (state.is_chasing ? "true" : "false")
                       << " timestamp_ns=" << state.timestamp_ns_session
                       << " space=" << (state.texture_space ? "texture" : "camera")
+                      << " frame='" << state.coordinate_frame << "'"
+                      << " origin='" << state.coordinate_origin << "'";
+            if (state.has_stimulus_canvas_offset) {
+                std::cout << " canvas_offset=(" << state.stimulus_canvas_offset_x
+                          << "," << state.stimulus_canvas_offset_y << ")";
+            }
+            std::cout
                       << std::endl;
             if (state.has_camera_coords) {
                 std::cout << "      camera_chaser=(" << state.chaser_camera_x << "," << state.chaser_camera_y << ")"
@@ -2242,11 +3589,24 @@ ZarrDetectionLoader::getChaserStatesForStimulusFrame(int32_t stimulus_frame) con
         candidate.is_chasing = src.is_chasing != 0;
         candidate.timestamp_ns_session = src.timestamp_ns_session;
         candidate.texture_space = src.texture_space;
+        candidate.coordinate_frame = src.coordinate_frame;
+        candidate.coordinate_origin = src.coordinate_origin;
+        candidate.stimulus_canvas_offset_x = src.stimulus_canvas_offset_x;
+        candidate.stimulus_canvas_offset_y = src.stimulus_canvas_offset_y;
+        candidate.has_stimulus_canvas_offset = src.has_stimulus_canvas_offset;
         candidate.chaser_camera_x = src.chaser_camera_x;
         candidate.chaser_camera_y = src.chaser_camera_y;
         candidate.target_camera_x = src.target_camera_x;
         candidate.target_camera_y = src.target_camera_y;
         candidate.has_camera_coords = src.has_camera_coords;
+        candidate.chaser_rgba = src.chaser_rgba;
+        candidate.has_chaser_rgba = src.has_chaser_rgba;
+        candidate.behavior_mode = src.behavior_mode;
+        candidate.has_behavior_mode = src.has_behavior_mode;
+        candidate.enable_chase = src.enable_chase;
+        candidate.has_enable_chase = src.has_enable_chase;
+        candidate.enable_random_movement = src.enable_random_movement;
+        candidate.has_enable_random_movement = src.has_enable_random_movement;
 
         int32_t key = candidate.chaser_index;
         auto it = latest_by_index.find(key);
@@ -2317,11 +3677,24 @@ ZarrDetectionLoader::getChaserInterpolatedStatesForStimulusFrame(int32_t stimulu
         candidate.is_chasing = src.is_chasing != 0;
         candidate.timestamp_ns_session = src.timestamp_ns_session;
         candidate.texture_space = src.texture_space;
+        candidate.coordinate_frame = src.coordinate_frame;
+        candidate.coordinate_origin = src.coordinate_origin;
+        candidate.stimulus_canvas_offset_x = src.stimulus_canvas_offset_x;
+        candidate.stimulus_canvas_offset_y = src.stimulus_canvas_offset_y;
+        candidate.has_stimulus_canvas_offset = src.has_stimulus_canvas_offset;
         candidate.chaser_camera_x = src.chaser_camera_x;
         candidate.chaser_camera_y = src.chaser_camera_y;
         candidate.target_camera_x = src.target_camera_x;
         candidate.target_camera_y = src.target_camera_y;
         candidate.has_camera_coords = src.has_camera_coords;
+        candidate.chaser_rgba = src.chaser_rgba;
+        candidate.has_chaser_rgba = src.has_chaser_rgba;
+        candidate.behavior_mode = src.behavior_mode;
+        candidate.has_behavior_mode = src.has_behavior_mode;
+        candidate.enable_chase = src.enable_chase;
+        candidate.has_enable_chase = src.has_enable_chase;
+        candidate.enable_random_movement = src.enable_random_movement;
+        candidate.has_enable_random_movement = src.has_enable_random_movement;
 
         int32_t key = candidate.chaser_index;
         auto it = latest_by_index.find(key);

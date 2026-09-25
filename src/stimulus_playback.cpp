@@ -1,28 +1,14 @@
 #include "stimulus_playback.h"
 #include "debug_flags.h"
+#include "frame_slot.h"
 #include <atomic>
+#include <algorithm>
 #include <exception>
+#include <optional>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/videoio.hpp>
 
 namespace {
-uint64_t nextSeekGeneration() {
-    static std::atomic<uint64_t> g_seek_generation{1};
-    return g_seek_generation.fetch_add(1, std::memory_order_relaxed);
-}
-
-bool markStimulusSeekDone(SeekInfo *seek_info, uint64_t seek_id,
-                          uint64_t settled_frame) {
-    std::lock_guard<std::mutex> lock(g_seek_info_mutex);
-    if (seek_info->use_seek) {
-        return false;
-    }
-    seek_info->seek_frame = settled_frame;
-    seek_info->settled_seek_id = seek_id;
-    seek_info->seek_done = true;
-    return true;
-}
-
 void clearStimulusErrorMessage(const std::string& window_name) {
     std::lock_guard<std::mutex> lock(g_decoder_error_mutex);
     g_decoder_error_messages.erase(window_name);
@@ -43,6 +29,23 @@ void recordStimulusErrorMessage(const std::string& window_name,
               << message << std::endl;
 }
 
+uint64_t nextSeekGeneration() {
+    static std::atomic<uint64_t> g_seek_generation{1};
+    return g_seek_generation.fetch_add(1, std::memory_order_relaxed);
+}
+
+bool markStimulusSeekDone(SeekInfo *seek_info, uint64_t seek_id,
+                          uint64_t settled_frame) {
+    std::lock_guard<std::mutex> lock(g_seek_info_mutex);
+    if (seek_info->use_seek) {
+        return false;
+    }
+    seek_info->seek_frame = settled_frame;
+    seek_info->settled_seek_id = seek_id;
+    seek_info->seek_done = true;
+    return true;
+}
+
 void stimulus_software_decode_process(DecoderContext *dc_context,
                                       const std::string &video_path,
                                       std::string window_name,
@@ -52,155 +55,180 @@ void stimulus_software_decode_process(DecoderContext *dc_context,
                                       bool use_cpu_buffer) {
     clearStimulusErrorMessage(window_name);
     try {
-        cv::VideoCapture capture(video_path, cv::CAP_FFMPEG);
-        if (!capture.isOpened()) {
-            std::cerr << "[Stimulus] Failed to open software decoder for "
-                      << video_path << std::endl;
-            return;
-        }
+    cv::VideoCapture capture(video_path, cv::CAP_FFMPEG);
+    if (!capture.isOpened()) {
+        recordStimulusErrorMessage(window_name,
+            "Failed to open software decoder for " + video_path);
+        return;
+    }
 
-        const size_t frame_bytes =
-            static_cast<size_t>(width) * static_cast<size_t>(height) * 4;
-        const int reported_frames =
-            static_cast<int>(capture.get(cv::CAP_PROP_FRAME_COUNT));
-        if (reported_frames > 0) {
-            dc_context->total_num_frame = reported_frames;
-            dc_context->estimated_num_frames = reported_frames;
-        }
+    const size_t frame_bytes =
+        static_cast<size_t>(width) * static_cast<size_t>(height) * 4;
+    const int reported_frames =
+        static_cast<int>(capture.get(cv::CAP_PROP_FRAME_COUNT));
+    if (reported_frames > 0) {
+        dc_context->total_num_frame = reported_frames;
+        dc_context->estimated_num_frames = reported_frames;
+    }
 
-        int buffer_head = 0;
-        int frame_number = 0;
-        bool pending_seek_done = false;
-        uint64_t pending_seek_id = 0;
+    int buffer_head = 0;
+    int frame_number = 0;
+    bool pending_seek_done = false;
+    uint64_t pending_seek_id = 0;
 
-        auto seek_requested = [&]() -> bool {
+    auto seek_requested = [&]() -> bool {
+        std::lock_guard<std::mutex> lock(g_seek_info_mutex);
+        return seek_info->use_seek;
+    };
+
+    while (!(dc_context->stop_flag)) {
+        bool has_seek_request = false;
+        uint64_t requested_frame = 0;
+        uint64_t active_seek_id = 0;
+        {
             std::lock_guard<std::mutex> lock(g_seek_info_mutex);
-            return seek_info->use_seek;
-        };
-
-        while (!(dc_context->stop_flag)) {
-            bool has_seek_request = false;
-            uint64_t requested_frame = 0;
-            uint64_t active_seek_id = 0;
-            {
-                std::lock_guard<std::mutex> lock(g_seek_info_mutex);
-                if (seek_info->use_seek) {
-                    has_seek_request = true;
-                    requested_frame = seek_info->seek_frame;
-                    active_seek_id = seek_info->seek_id;
-                    seek_info->use_seek = false;
-                    seek_info->seek_done = false;
-                }
+            if (seek_info->use_seek) {
+                has_seek_request = true;
+                requested_frame = seek_info->seek_frame;
+                active_seek_id = seek_info->seek_id;
+                seek_info->use_seek = false;
+                seek_info->seek_done = false;
             }
-
-            if (has_seek_request) {
-                for (int i = 0; i < size_of_buffer; ++i) {
-                    display_buffer[i].available_to_write = true;
-                    display_buffer[i].frame_number = -1;
-                }
-                buffer_head = 0;
-                frame_number = static_cast<int>(requested_frame);
-                latest_decoded_frame[window_name].store(-1);
-
-                const bool seek_ok =
-                    capture.set(cv::CAP_PROP_POS_FRAMES, static_cast<double>(requested_frame));
-                if (!seek_ok) {
-                    (void)markStimulusSeekDone(seek_info, active_seek_id, requested_frame);
-                    pending_seek_done = false;
-                    continue;
-                }
-
-                pending_seek_done = true;
-                pending_seek_id = active_seek_id;
-                continue;
-            }
-
-            if (!window_need_decoding[window_name].load()) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(2));
-                continue;
-            }
-
-            while (!display_buffer[buffer_head].available_to_write &&
-                   !(dc_context->stop_flag) && !seek_requested()) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            }
-            if (dc_context->stop_flag || seek_requested()) {
-                continue;
-            }
-
-            cv::Mat frame_bgr;
-            if (!capture.read(frame_bgr) || frame_bgr.empty()) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                continue;
-            }
-
-            cv::Mat frame_rgba;
-            switch (frame_bgr.channels()) {
-            case 4:
-                cv::cvtColor(frame_bgr, frame_rgba, cv::COLOR_BGRA2RGBA);
-                break;
-            case 3:
-                cv::cvtColor(frame_bgr, frame_rgba, cv::COLOR_BGR2RGBA);
-                break;
-            case 1:
-                cv::cvtColor(frame_bgr, frame_rgba, cv::COLOR_GRAY2RGBA);
-                break;
-            default:
-                std::cerr << "[Stimulus] Unsupported channel count in software decode: "
-                          << frame_bgr.channels() << std::endl;
-                continue;
-            }
-
-            if (frame_rgba.cols != width || frame_rgba.rows != height) {
-                cv::resize(frame_rgba, frame_rgba, cv::Size(width, height),
-                           0.0, 0.0, cv::INTER_LINEAR);
-            }
-
-            if (use_cpu_buffer) {
-                std::memcpy(display_buffer[buffer_head].frame, frame_rgba.data, frame_bytes);
-            } else {
-                checkCudaStatus(
-                    cudaMemcpy(display_buffer[buffer_head].frame, frame_rgba.data,
-                               frame_bytes, cudaMemcpyHostToDevice),
-                    "Stimulus software decode cudaMemcpy failed");
-            }
-
-            display_buffer[buffer_head].available_to_write = false;
-            display_buffer[buffer_head].frame_number = frame_number;
-            display_buffer[buffer_head].color_matrix = ColorSpaceStandard_BT709;
-            latest_decoded_frame[window_name].store(frame_number);
-            dc_context->decoding_flag = true;
-
-            if (pending_seek_done) {
-                (void)markStimulusSeekDone(seek_info, pending_seek_id,
-                                           static_cast<uint64_t>(frame_number));
-                pending_seek_done = false;
-            }
-
-            ++frame_number;
-            buffer_head = (buffer_head + 1) % size_of_buffer;
         }
+
+        if (has_seek_request) {
+            for (int i = 0; i < size_of_buffer; ++i) {
+                frameSlotReleaseForReuse(display_buffer[i]);
+            }
+            buffer_head = 0;
+            frame_number = static_cast<int>(requested_frame);
+            latest_decoded_frame[window_name].store(-1);
+
+            const bool seek_ok =
+                capture.set(cv::CAP_PROP_POS_FRAMES, static_cast<double>(requested_frame));
+            if (!seek_ok) {
+                (void)markStimulusSeekDone(seek_info, active_seek_id, requested_frame);
+                pending_seek_done = false;
+                continue;
+            }
+
+            pending_seek_done = true;
+            pending_seek_id = active_seek_id;
+            continue;
+        }
+
+        if (!window_need_decoding[window_name].load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            continue;
+        }
+
+        std::optional<FrameSlotWriteLease> write_lease;
+        while (!(dc_context->stop_flag) && !seek_requested()) {
+            write_lease = frameSlotAcquireWritable(display_buffer[buffer_head]);
+            if (write_lease.has_value()) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        if (!write_lease.has_value() || dc_context->stop_flag ||
+            seek_requested()) {
+            continue;
+        }
+
+        cv::Mat frame_bgr;
+        if (!capture.read(frame_bgr) || frame_bgr.empty()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            continue;
+        }
+
+        cv::Mat frame_rgba;
+        switch (frame_bgr.channels()) {
+        case 4:
+            cv::cvtColor(frame_bgr, frame_rgba, cv::COLOR_BGRA2RGBA);
+            break;
+        case 3:
+            cv::cvtColor(frame_bgr, frame_rgba, cv::COLOR_BGR2RGBA);
+            break;
+        case 1:
+            cv::cvtColor(frame_bgr, frame_rgba, cv::COLOR_GRAY2RGBA);
+            break;
+        default:
+            std::cerr << "[Stimulus] Unsupported channel count in software decode: "
+                      << frame_bgr.channels() << std::endl;
+            continue;
+        }
+
+        if (frame_rgba.cols != width || frame_rgba.rows != height) {
+            cv::resize(frame_rgba, frame_rgba, cv::Size(width, height),
+                       0.0, 0.0, cv::INTER_LINEAR);
+        }
+
+        if (use_cpu_buffer) {
+            std::memcpy(write_lease->frame(), frame_rgba.data, frame_bytes);
+        } else {
+            checkCudaStatus(
+                cudaMemcpy(write_lease->frame(), frame_rgba.data,
+                           frame_bytes, cudaMemcpyHostToDevice),
+                "Stimulus software decode cudaMemcpy failed");
+        }
+
+        FrameSlotMetadata metadata;
+        metadata.stream_id = window_name;
+        metadata.frame_number = frame_number;
+        metadata.local_frame_number = frame_number;
+        metadata.frame_pts = -1;
+        metadata.frame_source_code = pending_seek_done ? 1 : 2;
+        metadata.width = width;
+        metadata.height = height;
+        metadata.pitch_bytes = width * 4;
+        metadata.frame_bytes = frame_bytes;
+        metadata.color_matrix = ColorSpaceStandard_BT709;
+        metadata.color_range = ColorRange_Unspecified;
+        metadata.pixel_format = FramePixelFormat::RGBA8;
+        metadata.surface_backend =
+            use_cpu_buffer ? FrameSurfaceBackend::Cpu
+                           : FrameSurfaceBackend::NvidiaCuda;
+        metadata.ownership = FrameSurfaceOwnership::SlotOwned;
+        metadata.lifetime = FrameSurfaceLifetime::UntilReadLeaseReleased;
+        write_lease->publish(metadata);
+        latest_decoded_frame[window_name].store(frame_number);
+        dc_context->decoding_flag = true;
+
+        if (pending_seek_done) {
+            (void)markStimulusSeekDone(seek_info, pending_seek_id,
+                                       static_cast<uint64_t>(frame_number));
+            pending_seek_done = false;
+        }
+
+        ++frame_number;
+        buffer_head = (buffer_head + 1) % size_of_buffer;
+    }
     } catch (const std::exception& e) {
         recordStimulusErrorMessage(window_name, e.what());
     } catch (...) {
         recordStimulusErrorMessage(window_name,
-                                   "Unknown non-standard stimulus software decode exception");
+                                  "Unknown non-standard stimulus decoder exception");
     }
 }
 }  // namespace
 
-void destroyStimulusPlayback(StimulusPlayback &stim) {
+void joinStimulusDecoder(StimulusPlayback &stim) {
     if (stim.decoder_context) {
         stim.decoder_context->stop_flag = true;
     }
     if (stim.decoder_thread.joinable()) {
         stim.decoder_thread.join();
     }
+}
+
+void destroyStimulusPlayback(StimulusPlayback &stim) {
+    joinStimulusDecoder(stim);
     // unique_ptr automatically deletes when reset() is called
     stim.decoder_context.reset();
     stim.demuxer.reset();
     if (stim.display_buffer) {
         for (int i = 0; i < stim.buffer_size; ++i) {
+            frameSlotDestroy(stim.display_buffer[i]);
             if (stim.display_buffer[i].frame) {
                 if (stim.use_cpu_buffer) {
                     free(stim.display_buffer[i].frame);
@@ -245,33 +273,49 @@ void destroyStimulusPlayback(StimulusPlayback &stim) {
     }
 }
 
-bool allocateStimulusBuffers(StimulusPlayback &stim) {
+bool allocateStimulusBuffers(StimulusPlayback &stim,
+                            const std::function<void()> &poll_owner_events,
+                            const std::function<bool()> &opening_cancelled) {
     size_t frame_bytes = static_cast<size_t>(stim.width) * static_cast<size_t>(stim.height) * 4;
     stim.display_buffer =
         static_cast<PictureBuffer *>(malloc(sizeof(PictureBuffer) * stim.buffer_size));
     if (!stim.display_buffer) {
         return false;
     }
+    auto clear_slots = [&](int through) {
+        for (int j = 0; j <= through; ++j) {
+            frameSlotDestroy(stim.display_buffer[j]);
+            if (stim.display_buffer[j].frame) {
+                if (stim.use_cpu_buffer) {
+                    free(stim.display_buffer[j].frame);
+                } else {
+                    cudaFree(stim.display_buffer[j].frame);
+                }
+                stim.display_buffer[j].frame = nullptr;
+            }
+        }
+        free(stim.display_buffer);
+        stim.display_buffer = nullptr;
+    };
     for (int i = 0; i < stim.buffer_size; ++i) {
         stim.display_buffer[i].frame = nullptr;
         stim.display_buffer[i].frame_number = -1;
+        stim.display_buffer[i].local_frame_number = -1;
+        stim.display_buffer[i].frame_pts = -1;
+        stim.display_buffer[i].frame_source_code = 0;
         stim.display_buffer[i].available_to_write = true;
         stim.display_buffer[i].pitch_bytes = stim.width * 4;
         stim.display_buffer[i].frame_bytes = frame_bytes;
         stim.display_buffer[i].color_matrix = ColorSpaceStandard_BT709;
-        stim.display_buffer[i].format = PictureBufferFormat::RGBA32;
+        stim.display_buffer[i].color_range = ColorRange_Unspecified;
+        stim.display_buffer[i].format = FramePixelFormat::RGBA8;
+        stim.display_buffer[i].frame_slot_state = nullptr;
+        frameSlotInitialize(stim.display_buffer[i]);
         if (stim.use_cpu_buffer) {
             stim.display_buffer[i].frame =
                 static_cast<unsigned char *>(malloc(frame_bytes));
             if (!stim.display_buffer[i].frame) {
-                for (int j = 0; j < i; ++j) {
-                    if (stim.display_buffer[j].frame) {
-                        free(stim.display_buffer[j].frame);
-                        stim.display_buffer[j].frame = nullptr;
-                    }
-                }
-                free(stim.display_buffer);
-                stim.display_buffer = nullptr;
+                clear_slots(i);
                 return false;
             }
             decoder_clear_buffer_with_constant_image(stim.display_buffer[i].frame,
@@ -281,80 +325,89 @@ bool allocateStimulusBuffers(StimulusPlayback &stim) {
                 cudaMalloc(reinterpret_cast<void **>(&stim.display_buffer[i].frame),
                            frame_bytes);
             if (err != cudaSuccess) {
-                for (int j = 0; j <= i; ++j) {
-                    if (stim.display_buffer[j].frame) {
-                        cudaFree(stim.display_buffer[j].frame);
-                        stim.display_buffer[j].frame = nullptr;
-                    }
-                }
-                free(stim.display_buffer);
-                stim.display_buffer = nullptr;
+                clear_slots(i);
                 return false;
             }
+        }
+        if (poll_owner_events) {
+            poll_owner_events();
+        }
+        if (opening_cancelled && opening_cancelled()) {
+            clear_slots(i);
+            return false;
         }
     }
     return true;
 }
 
-bool initializeStimulusPlayback(StimulusPlayback &stim,
-                                const std::string &video_path,
-                                int buffer_size,
-                                bool use_cpu_buffer,
-                                bool use_software_decode,
-                                int cuda_device_index) {
-    destroyStimulusPlayback(stim);
-    clearStimulusErrorMessage(stim.window_name);
-
-    stim.video_path = video_path;
-    stim.buffer_size = std::max(1, buffer_size);
-    stim.use_cpu_buffer = use_cpu_buffer;
-    stim.use_software_decode = use_software_decode;
-
-    if (stim.use_software_decode) {
+bool prepareStimulusPlayback(const std::string &video_path, int buffer_size,
+                             bool use_cpu_buffer, bool use_software_decode,
+                             PreparedStimulusPlayback &prepared,
+                             std::string &error) {
+    PreparedStimulusPlayback candidate;
+    candidate.video_path = video_path;
+    candidate.buffer_size = std::max(1, buffer_size);
+    candidate.use_cpu_buffer = use_cpu_buffer;
+    candidate.use_software_decode = use_software_decode;
+    if (video_path.empty()) {
+        error = "No stimulus media path was selected";
+        return false;
+    }
+    if (use_software_decode) {
         cv::VideoCapture probe(video_path, cv::CAP_FFMPEG);
         if (!probe.isOpened()) {
-            std::cout << "Failed to open stimulus video (software): "
-                      << video_path << std::endl;
+            error = "Failed to open stimulus video (software): " + video_path;
             return false;
         }
-        stim.width = static_cast<uint32_t>(probe.get(cv::CAP_PROP_FRAME_WIDTH));
-        stim.height = static_cast<uint32_t>(probe.get(cv::CAP_PROP_FRAME_HEIGHT));
-        stim.fps = probe.get(cv::CAP_PROP_FPS);
-        if (stim.width == 0 || stim.height == 0) {
-            std::cout << "Stimulus video reports zero dimension; aborting load."
-                      << std::endl;
-            destroyStimulusPlayback(stim);
-            return false;
-        }
-        if (stim.fps <= 0.0) {
-            stim.fps = 30.0;
+        candidate.width = static_cast<uint32_t>(probe.get(cv::CAP_PROP_FRAME_WIDTH));
+        candidate.height = static_cast<uint32_t>(probe.get(cv::CAP_PROP_FRAME_HEIGHT));
+        candidate.fps = probe.get(cv::CAP_PROP_FPS);
+        if (candidate.fps <= 0.0) {
+            candidate.fps = 30.0;
         }
     } else {
         std::map<std::string, std::string> ffmpeg_options;
         try {
-            stim.demuxer =
+            candidate.demuxer =
                 std::make_unique<FFmpegDemuxer>(video_path.c_str(), ffmpeg_options);
         } catch (const std::exception &e) {
-            std::cout << "Failed to open stimulus video: " << e.what() << std::endl;
-            stim.demuxer.reset();
+            error = std::string("Failed to open stimulus video: ") + e.what();
             return false;
         }
-
-        stim.width = stim.demuxer->GetWidth();
-        stim.height = stim.demuxer->GetHeight();
-        if (stim.width == 0 || stim.height == 0) {
-            std::cout << "Stimulus video reports zero dimension; aborting load."
-                      << std::endl;
-            destroyStimulusPlayback(stim);
-            return false;
-        }
-        stim.fps = stim.demuxer->GetFramerate();
-        if (stim.fps <= 0.0) {
-            stim.fps = stim.demuxer->GetAvgFramerate();
+        candidate.width = candidate.demuxer->GetWidth();
+        candidate.height = candidate.demuxer->GetHeight();
+        candidate.fps = candidate.demuxer->GetFramerate();
+        if (candidate.fps <= 0.0) {
+            candidate.fps = candidate.demuxer->GetAvgFramerate();
         }
     }
+    if (candidate.width == 0 || candidate.height == 0) {
+        error = "Stimulus video reports zero dimension";
+        return false;
+    }
+    prepared = std::move(candidate);
+    error.clear();
+    return true;
+}
 
-    if (!allocateStimulusBuffers(stim)) {
+bool initializePreparedStimulusPlayback(StimulusPlayback &stim,
+                                       PreparedStimulusPlayback prepared,
+                                       int cuda_device_index,
+                                       const std::function<void()> &poll_owner_events,
+                                       const std::function<bool()> &opening_cancelled) {
+    destroyStimulusPlayback(stim);
+    clearStimulusErrorMessage(stim.window_name);
+    stim.video_path = std::move(prepared.video_path);
+    stim.buffer_size = prepared.buffer_size;
+    stim.use_cpu_buffer = prepared.use_cpu_buffer;
+    stim.use_software_decode = prepared.use_software_decode;
+    stim.width = prepared.width;
+    stim.height = prepared.height;
+    stim.fps = prepared.fps;
+    stim.demuxer = std::move(prepared.demuxer);
+
+    if (!allocateStimulusBuffers(stim, poll_owner_events,
+                                 opening_cancelled)) {
         std::cout << "Failed to allocate stimulus buffers." << std::endl;
         destroyStimulusPlayback(stim);
         return false;
@@ -378,6 +431,14 @@ bool initializeStimulusPlayback(StimulusPlayback &stim,
 
     stim.resources_initialized = true;
 
+    if (poll_owner_events) {
+        poll_owner_events();
+    }
+    if (opening_cancelled && opening_cancelled()) {
+        destroyStimulusPlayback(stim);
+        return false;
+    }
+
     auto decoder_context = DecoderContext{};
     decoder_context.decoding_flag = false;
     decoder_context.stop_flag = false;
@@ -385,7 +446,13 @@ bool initializeStimulusPlayback(StimulusPlayback &stim,
     decoder_context.estimated_num_frames = 0;
     decoder_context.gpu_index = cuda_device_index;
     decoder_context.seek_interval = 250;
-    stim.decoder_context = std::make_unique<DecoderContext>(decoder_context);
+    stim.decoder_context = std::make_unique<DecoderContext>();
+    stim.decoder_context->decoding_flag = decoder_context.decoding_flag;
+    stim.decoder_context->stop_flag.store(decoder_context.stop_flag.load());
+    stim.decoder_context->total_num_frame = decoder_context.total_num_frame;
+    stim.decoder_context->estimated_num_frames = decoder_context.estimated_num_frames;
+    stim.decoder_context->gpu_index = decoder_context.gpu_index;
+    stim.decoder_context->seek_interval = decoder_context.seek_interval;
 
     stim.seek.use_seek = false;
     stim.seek.seek_done = false;
@@ -396,6 +463,11 @@ bool initializeStimulusPlayback(StimulusPlayback &stim,
 
     window_need_decoding[stim.window_name].store(false);
     latest_decoded_frame[stim.window_name].store(-1);
+
+    if (opening_cancelled && opening_cancelled()) {
+        destroyStimulusPlayback(stim);
+        return false;
+    }
 
     if (stim.use_software_decode) {
         stim.decoder_thread = std::thread(
@@ -417,13 +489,30 @@ bool initializeStimulusPlayback(StimulusPlayback &stim,
     stim.playback_catchup_seek_id = 0;
     stim.playback_catchup_target_frame = -1;
     stim.playback_catchup_last_request = std::chrono::steady_clock::time_point{};
-    std::cout << "[Stimulus] decoder initialized: " << video_path
+    std::cout << "[Stimulus] decoder initialized: " << stim.video_path
               << " size=" << stim.width << "x" << stim.height
               << " fps=" << stim.fps << " buffer=" << stim.buffer_size
               << " backend=" << (stim.use_software_decode ? "software" : "gpu")
               << " mode=" << (stim.use_cpu_buffer ? "cpu" : "gpu")
               << std::endl;
     return true;
+}
+
+bool initializeStimulusPlayback(StimulusPlayback &stim,
+                                const std::string &video_path,
+                                int buffer_size,
+                                bool use_cpu_buffer,
+                                bool use_software_decode,
+                                int cuda_device_index) {
+    PreparedStimulusPlayback prepared;
+    std::string error;
+    if (!prepareStimulusPlayback(video_path, buffer_size, use_cpu_buffer,
+                                 use_software_decode, prepared, error)) {
+        std::cout << error << std::endl;
+        return false;
+    }
+    return initializePreparedStimulusPlayback(stim, std::move(prepared),
+                                             cuda_device_index);
 }
 
 int findStimulusBuffer(const StimulusPlayback &stim,
@@ -435,15 +524,15 @@ int findStimulusBuffer(const StimulusPlayback &stim,
     int best_distance = std::numeric_limits<int>::max();
     int best_frame = std::numeric_limits<int>::min();
     for (int i = 0; i < stim.buffer_size; ++i) {
-        const PictureBuffer &buf = stim.display_buffer[i];
-        if (buf.available_to_write || buf.frame_number < 0) {
+        auto metadata = frameSlotSnapshotReadable(stim.display_buffer[i]);
+        if (!metadata) {
             continue;
         }
-        if (buf.frame_number == target_frame) {
+        if (metadata->frame_number == target_frame) {
             return i;
         }
 
-        const int frame_num = buf.frame_number;
+        const int frame_num = metadata->frame_number;
         const int distance = (frame_num > target_frame)
                                  ? (frame_num - target_frame)
                                  : (target_frame - frame_num);
@@ -471,8 +560,7 @@ void releaseStimulusBufferSlot(StimulusPlayback &stim, int index) {
     if (!stim.display_buffer || index < 0 || index >= stim.buffer_size) {
         return;
     }
-    stim.display_buffer[index].available_to_write = true;
-    stim.display_buffer[index].frame_number = -1;
+    frameSlotReleaseForReuse(stim.display_buffer[index]);
 }
 
 void uploadStimulusFrameToTexture(StimulusPlayback &stim, int buffer_index) {
@@ -481,16 +569,21 @@ void uploadStimulusFrameToTexture(StimulusPlayback &stim, int buffer_index) {
         return;
     }
 
-    PictureBuffer &buffer = stim.display_buffer[buffer_index];
-    if (buffer.available_to_write || !buffer.frame) {
+    auto read_lease = frameSlotAcquireReadable(stim.display_buffer[buffer_index]);
+    if (!read_lease.has_value() || !read_lease->frame()) {
         return;
     }
 
     size_t frame_bytes =
         static_cast<size_t>(stim.width) * static_cast<size_t>(stim.height) * 4;
+    const size_t copy_bytes =
+        read_lease->metadata().frame_bytes > 0
+            ? std::min(read_lease->metadata().frame_bytes, frame_bytes)
+            : frame_bytes;
     cudaMemcpyKind kind =
         stim.use_cpu_buffer ? cudaMemcpyHostToDevice : cudaMemcpyDeviceToDevice;
-    checkCudaStatus(cudaMemcpy(stim.pbo.cuda_buffer, buffer.frame, frame_bytes, kind),
+    checkCudaStatus(cudaMemcpy(stim.pbo.cuda_buffer, read_lease->frame(),
+                               copy_bytes, kind),
                     "Stimulus cudaMemcpy failed");
 
     bind_pbo(&stim.pbo.pbo);
@@ -499,6 +592,7 @@ void uploadStimulusFrameToTexture(StimulusPlayback &stim, int buffer_index) {
     unbind_pbo();
     unbind_texture();
 
+    read_lease->release();
     releaseStimulusBufferSlot(stim, buffer_index);
 }
 
@@ -508,11 +602,9 @@ void discardStimulusFramesOlderThan(StimulusPlayback &stim, int keep_threshold) 
     }
     int released = 0;
     for (int i = 0; i < stim.buffer_size; ++i) {
-        auto &buf = stim.display_buffer[i];
-        if (!buf.available_to_write && buf.frame_number >= 0 &&
-            buf.frame_number < keep_threshold) {
-            buf.available_to_write = true;
-            buf.frame_number = -1;
+        auto metadata = frameSlotSnapshotReadable(stim.display_buffer[i]);
+        if (metadata && metadata->frame_number < keep_threshold) {
+            frameSlotReleaseForReuse(stim.display_buffer[i]);
             ++released;
         }
     }
@@ -528,9 +620,9 @@ int getOldestStimulusFrame(const StimulusPlayback &stim) {
     }
     int oldest = std::numeric_limits<int>::max();
     for (int i = 0; i < stim.buffer_size; ++i) {
-        const auto &buf = stim.display_buffer[i];
-        if (!buf.available_to_write && buf.frame_number >= 0) {
-            oldest = std::min(oldest, buf.frame_number);
+        auto metadata = frameSlotSnapshotReadable(stim.display_buffer[i]);
+        if (metadata) {
+            oldest = std::min(oldest, metadata->frame_number);
         }
     }
     return oldest;
@@ -542,23 +634,24 @@ int getNewestStimulusFrame(const StimulusPlayback &stim) {
     }
     int newest = -1;
     for (int i = 0; i < stim.buffer_size; ++i) {
-        const auto &buf = stim.display_buffer[i];
-        if (!buf.available_to_write && buf.frame_number >= 0) {
-            newest = std::max(newest, buf.frame_number);
+        auto metadata = frameSlotSnapshotReadable(stim.display_buffer[i]);
+        if (metadata) {
+            newest = std::max(newest, metadata->frame_number);
         }
     }
     return newest;
 }
 
 void scheduleStimulusSeek(StimulusPlayback &stim,
-                          ZarrDetectionLoader *loader,
+                          const crimson::zarr::StimulusRepository *repository,
                           int camera_frame,
                           bool seek_accurate,
                           uint64_t seek_id) {
-    if (!stim.loaded || !loader || !loader->hasStimulusAlignment()) {
+    if (!stim.loaded) {
         return;
     }
-    auto stim_frame = loader->getStimulusFrameForCameraFrame(camera_frame);
+    auto stim_frame =
+        crimson::zarr::StimulusFrameForCamera(repository, camera_frame);
     if (!stim_frame || *stim_frame < 0) {
         return;
     }
@@ -584,7 +677,7 @@ void scheduleStimulusSeek(StimulusPlayback &stim,
 
 void seek_all_cameras(render_scene *scene, int frame_number, double video_fps,
                       PlaybackState &state, bool seek_accurate,
-                      ZarrDetectionLoader *zarr_loader,
+                      const crimson::zarr::StimulusRepository *repository,
                       StimulusPlayback *stimulus) {
     const uint64_t seek_id = nextSeekGeneration();
     initiate_camera_seeks(scene, frame_number, seek_id, seek_accurate);
@@ -601,13 +694,12 @@ void seek_all_cameras(render_scene *scene, int frame_number, double video_fps,
     state.last_wall_time_playspeed = std::chrono::steady_clock::now();
 
     if (stimulus && stimulus->loaded) {
-        if (zarr_loader && zarr_loader->hasStimulusAlignment()) {
-            auto stim_frame = zarr_loader->getStimulusFrameForCameraFrame(frame_number);
-            if (stim_frame && *stim_frame >= 0) {
-                state.current_stimulus_frame = *stim_frame;
-            }
+        auto stim_frame =
+            crimson::zarr::StimulusFrameForCamera(repository, frame_number);
+        if (stim_frame && *stim_frame >= 0) {
+            state.current_stimulus_frame = *stim_frame;
         }
-        scheduleStimulusSeek(*stimulus, zarr_loader, frame_number, seek_accurate,
+        scheduleStimulusSeek(*stimulus, repository, frame_number, seek_accurate,
                              seek_id);
     }
 }

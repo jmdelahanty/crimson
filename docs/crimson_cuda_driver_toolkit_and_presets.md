@@ -217,6 +217,17 @@ Runtime:
 A machine can pass `nvidia-smi` and still fail to build if the toolkit root is
 wrong.
 
+For a run-only Linux app drop, the user's installed CUDA Toolkit should not be
+the deciding factor. The app should resolve its pinned runtime libraries from
+the staged install tree or an approved module/runtime root, while `libcuda.so`
+comes from the installed NVIDIA driver. A machine with a newer toolkit installed
+can still run a Crimson app built against the CUDA `12.4` stack if the driver is
+compatible and the app's runtime library search path does not accidentally bind
+to unrelated TensorRT, OpenCV, FFmpeg, or CUDA libraries.
+
+See [docs/crimson_linux_distribution_strategy.md](/home/delahantyj@hhmi.org/gitrepos/crimson-ui-monolith/docs/crimson_linux_distribution_strategy.md)
+for the Linux distribution model.
+
 ---
 
 ## Recommended Team Rule

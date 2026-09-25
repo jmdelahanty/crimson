@@ -1,0 +1,494 @@
+{
+  "catalogs": [
+    {
+      "envelope": {
+        "digest": "337613bd6e5f283eef9d6a89c14766d50c5b6863dea584f7568b90bb1d936733",
+        "digest_algorithm": "sha256_canonical_json_v1",
+        "document": {
+          "bindings": [
+            {
+              "array_contract_id": "palette.array.detection.bbox_img_xyxy",
+              "array_contract_version": 1,
+              "legacy_coordinate_space": "source_camera_pixel_edges",
+              "schema_id": "palette.array_coordinate_binding",
+              "schema_version": 1,
+              "semantic_role": "exact_derived_numeric_surface",
+              "surface_id": "source_camera_bbox_xyxy_v1"
+            },
+            {
+              "array_contract_id": "palette.array.detection.bbox_norm_coords",
+              "array_contract_version": 1,
+              "legacy_coordinate_space": "source_camera_normalized",
+              "schema_id": "palette.array_coordinate_binding",
+              "schema_version": 1,
+              "semantic_role": "authoritative_numeric_surface",
+              "surface_id": "source_camera_normalized_bbox_cxcywh_v1"
+            },
+            {
+              "array_contract_id": "palette.array.detection.centers_img_xy",
+              "array_contract_version": 1,
+              "legacy_coordinate_space": "source_camera_continuous_pixel",
+              "schema_id": "palette.array_coordinate_binding",
+              "schema_version": 1,
+              "semantic_role": "exact_derived_numeric_surface",
+              "surface_id": "source_camera_point_xy_v1"
+            }
+          ],
+          "schema_id": "palette.array_coordinate_catalog",
+          "schema_version": 1,
+          "surfaces": [
+            {
+              "component_units": [
+                "px",
+                "px",
+                "px",
+                "px"
+              ],
+              "components": [
+                "x_min",
+                "y_min",
+                "x_max",
+                "y_max"
+              ],
+              "descriptor_overlay_status": "direct",
+              "descriptor_profile_id": "source_camera_image_px.top_left_y_down.v1",
+              "domain_id": "source_camera_image_px",
+              "geometry_type": "bbox_xyxy",
+              "pixel_convention": "pixel_edge_half_open",
+              "reference_extent_role": "source_camera_frame",
+              "schema_id": "palette.coordinate_surface_contract",
+              "schema_version": 1,
+              "source_camera_mapping": "direct_source_camera_continuous_pixels",
+              "surface_id": "source_camera_bbox_xyxy_v1"
+            },
+            {
+              "component_units": [
+                "normalized",
+                "normalized",
+                "normalized",
+                "normalized"
+              ],
+              "components": [
+                "center_x",
+                "center_y",
+                "width",
+                "height"
+              ],
+              "descriptor_overlay_status": "requires_transform",
+              "descriptor_profile_id": "source_camera_normalized_xy.top_left_y_down.v1",
+              "domain_id": "source_camera_normalized_xy",
+              "geometry_type": "bbox_cxcywh",
+              "pixel_convention": "continuous",
+              "reference_extent_role": "source_camera_frame",
+              "schema_id": "palette.coordinate_surface_contract",
+              "schema_version": 1,
+              "source_camera_mapping": "scale_by_source_camera_extent",
+              "surface_id": "source_camera_normalized_bbox_cxcywh_v1"
+            },
+            {
+              "component_units": [
+                "px",
+                "px"
+              ],
+              "components": [
+                "x",
+                "y"
+              ],
+              "descriptor_overlay_status": "direct",
+              "descriptor_profile_id": "source_camera_image_px.top_left_y_down.v1",
+              "domain_id": "source_camera_image_px",
+              "geometry_type": "point_xy",
+              "pixel_convention": "continuous",
+              "reference_extent_role": "source_camera_frame",
+              "schema_id": "palette.coordinate_surface_contract",
+              "schema_version": 1,
+              "source_camera_mapping": "direct_source_camera_continuous_pixels",
+              "surface_id": "source_camera_point_xy_v1"
+            }
+          ]
+        },
+        "schema_id": "palette.persisted_coordinate_catalog",
+        "schema_version": 1
+      },
+      "stage": "canonical_detection"
+    },
+    {
+      "envelope": {
+        "digest": "75656615ecd32a215f6b4148a01c9ef75e96b8d7aa6bf9fb8a7d21757fa7a2ed",
+        "digest_algorithm": "sha256_canonical_json_v1",
+        "document": {
+          "bindings": [
+            {
+              "array_contract_id": "palette.array.detection.bbox_img_xyxy",
+              "array_contract_version": 1,
+              "legacy_coordinate_space": "source_camera_pixel_edges",
+              "schema_id": "palette.array_coordinate_binding",
+              "schema_version": 1,
+              "semantic_role": "exact_derived_numeric_surface",
+              "surface_id": "source_camera_bbox_xyxy_v1"
+            },
+            {
+              "array_contract_id": "palette.array.detection.bbox_norm_coords",
+              "array_contract_version": 1,
+              "legacy_coordinate_space": "source_camera_normalized",
+              "schema_id": "palette.array_coordinate_binding",
+              "schema_version": 1,
+              "semantic_role": "authoritative_numeric_surface",
+              "surface_id": "source_camera_normalized_bbox_cxcywh_v1"
+            },
+            {
+              "array_contract_id": "palette.array.detection.centers_img_xy",
+              "array_contract_version": 1,
+              "legacy_coordinate_space": "source_camera_continuous_pixel",
+              "schema_id": "palette.array_coordinate_binding",
+              "schema_version": 1,
+              "semantic_role": "exact_derived_numeric_surface",
+              "surface_id": "source_camera_point_xy_v1"
+            },
+            {
+              "array_contract_id": "palette.array.refined_detection.source.bbox_img_xyxy",
+              "array_contract_version": 1,
+              "legacy_coordinate_space": "source_camera_pixel_edges",
+              "schema_id": "palette.array_coordinate_binding",
+              "schema_version": 1,
+              "semantic_role": "exact_derived_numeric_surface",
+              "surface_id": "source_camera_bbox_xyxy_v1"
+            },
+            {
+              "array_contract_id": "palette.array.refined_detection.source.bbox_norm_coords",
+              "array_contract_version": 1,
+              "legacy_coordinate_space": "source_camera_normalized",
+              "schema_id": "palette.array_coordinate_binding",
+              "schema_version": 1,
+              "semantic_role": "authoritative_numeric_surface",
+              "surface_id": "source_camera_normalized_bbox_cxcywh_v1"
+            },
+            {
+              "array_contract_id": "palette.array.refined_detection.source.centers_img_xy",
+              "array_contract_version": 1,
+              "legacy_coordinate_space": "source_camera_continuous_pixel",
+              "schema_id": "palette.array_coordinate_binding",
+              "schema_version": 1,
+              "semantic_role": "exact_derived_numeric_surface",
+              "surface_id": "source_camera_point_xy_v1"
+            }
+          ],
+          "schema_id": "palette.array_coordinate_catalog",
+          "schema_version": 1,
+          "surfaces": [
+            {
+              "component_units": [
+                "px",
+                "px",
+                "px",
+                "px"
+              ],
+              "components": [
+                "x_min",
+                "y_min",
+                "x_max",
+                "y_max"
+              ],
+              "descriptor_overlay_status": "direct",
+              "descriptor_profile_id": "source_camera_image_px.top_left_y_down.v1",
+              "domain_id": "source_camera_image_px",
+              "geometry_type": "bbox_xyxy",
+              "pixel_convention": "pixel_edge_half_open",
+              "reference_extent_role": "source_camera_frame",
+              "schema_id": "palette.coordinate_surface_contract",
+              "schema_version": 1,
+              "source_camera_mapping": "direct_source_camera_continuous_pixels",
+              "surface_id": "source_camera_bbox_xyxy_v1"
+            },
+            {
+              "component_units": [
+                "normalized",
+                "normalized",
+                "normalized",
+                "normalized"
+              ],
+              "components": [
+                "center_x",
+                "center_y",
+                "width",
+                "height"
+              ],
+              "descriptor_overlay_status": "requires_transform",
+              "descriptor_profile_id": "source_camera_normalized_xy.top_left_y_down.v1",
+              "domain_id": "source_camera_normalized_xy",
+              "geometry_type": "bbox_cxcywh",
+              "pixel_convention": "continuous",
+              "reference_extent_role": "source_camera_frame",
+              "schema_id": "palette.coordinate_surface_contract",
+              "schema_version": 1,
+              "source_camera_mapping": "scale_by_source_camera_extent",
+              "surface_id": "source_camera_normalized_bbox_cxcywh_v1"
+            },
+            {
+              "component_units": [
+                "px",
+                "px"
+              ],
+              "components": [
+                "x",
+                "y"
+              ],
+              "descriptor_overlay_status": "direct",
+              "descriptor_profile_id": "source_camera_image_px.top_left_y_down.v1",
+              "domain_id": "source_camera_image_px",
+              "geometry_type": "point_xy",
+              "pixel_convention": "continuous",
+              "reference_extent_role": "source_camera_frame",
+              "schema_id": "palette.coordinate_surface_contract",
+              "schema_version": 1,
+              "source_camera_mapping": "direct_source_camera_continuous_pixels",
+              "surface_id": "source_camera_point_xy_v1"
+            }
+          ]
+        },
+        "schema_id": "palette.persisted_coordinate_catalog",
+        "schema_version": 1
+      },
+      "stage": "refined_detection"
+    },
+    {
+      "envelope": {
+        "digest": "e9ce640761ee1de4a6edd72695968bd66ae2fcbdd09d7d2c902450904f6ddfec",
+        "digest_algorithm": "sha256_canonical_json_v1",
+        "document": {
+          "bindings": [
+            {
+              "array_contract_id": "palette.array.crop.bbox_roi_xyxy",
+              "array_contract_version": 1,
+              "legacy_coordinate_space": "crop_pixel_edges",
+              "schema_id": "palette.array_coordinate_binding",
+              "schema_version": 1,
+              "semantic_role": "exact_derived_numeric_surface",
+              "surface_id": "roi_bbox_xyxy_v1"
+            },
+            {
+              "array_contract_id": "palette.array.crop.roi_coordinates_full",
+              "array_contract_version": 1,
+              "legacy_coordinate_space": "source_camera_pixel_index",
+              "schema_id": "palette.array_coordinate_binding",
+              "schema_version": 1,
+              "semantic_role": "crop_placement_surface",
+              "surface_id": "source_camera_extraction_origin_xy_v1"
+            },
+            {
+              "array_contract_id": "palette.array.crop.roi_sizes_full",
+              "array_contract_version": 1,
+              "legacy_coordinate_space": "source_camera_pixel_extent",
+              "schema_id": "palette.array_coordinate_binding",
+              "schema_version": 1,
+              "semantic_role": "crop_placement_surface",
+              "surface_id": "source_camera_extraction_extent_wh_v1"
+            },
+            {
+              "array_contract_id": "palette.array.crop.source_crop_xywh",
+              "array_contract_version": 1,
+              "legacy_coordinate_space": "source_camera_pixel_edges",
+              "schema_id": "palette.array_coordinate_binding",
+              "schema_version": 1,
+              "semantic_role": "crop_placement_surface",
+              "surface_id": "source_camera_crop_xywh_v1"
+            },
+            {
+              "array_contract_id": "palette.array.detection.bbox_img_xyxy",
+              "array_contract_version": 1,
+              "legacy_coordinate_space": "source_camera_pixel_edges",
+              "schema_id": "palette.array_coordinate_binding",
+              "schema_version": 1,
+              "semantic_role": "exact_derived_numeric_surface",
+              "surface_id": "source_camera_bbox_xyxy_v1"
+            },
+            {
+              "array_contract_id": "palette.array.detection.bbox_norm_coords",
+              "array_contract_version": 1,
+              "legacy_coordinate_space": "source_camera_normalized",
+              "schema_id": "palette.array_coordinate_binding",
+              "schema_version": 1,
+              "semantic_role": "authoritative_numeric_surface",
+              "surface_id": "source_camera_normalized_bbox_cxcywh_v1"
+            },
+            {
+              "array_contract_id": "palette.array.detection.centers_img_xy",
+              "array_contract_version": 1,
+              "legacy_coordinate_space": "source_camera_continuous_pixel",
+              "schema_id": "palette.array_coordinate_binding",
+              "schema_version": 1,
+              "semantic_role": "exact_derived_numeric_surface",
+              "surface_id": "source_camera_point_xy_v1"
+            }
+          ],
+          "schema_id": "palette.array_coordinate_catalog",
+          "schema_version": 1,
+          "surfaces": [
+            {
+              "component_units": [
+                "px",
+                "px",
+                "px",
+                "px"
+              ],
+              "components": [
+                "x_min",
+                "y_min",
+                "x_max",
+                "y_max"
+              ],
+              "descriptor_overlay_status": "requires_transform",
+              "descriptor_profile_id": "roi_local_px.top_left_y_down.v1",
+              "domain_id": "roi_local_px",
+              "geometry_type": "bbox_xyxy",
+              "pixel_convention": "pixel_edge_half_open",
+              "reference_extent_role": "row_roi_frame",
+              "schema_id": "palette.coordinate_surface_contract",
+              "schema_version": 1,
+              "source_camera_mapping": "rowwise_roi_to_source_camera_transform",
+              "surface_id": "roi_bbox_xyxy_v1"
+            },
+            {
+              "component_units": [
+                "px",
+                "px",
+                "px",
+                "px"
+              ],
+              "components": [
+                "x_min",
+                "y_min",
+                "x_max",
+                "y_max"
+              ],
+              "descriptor_overlay_status": "direct",
+              "descriptor_profile_id": "source_camera_image_px.top_left_y_down.v1",
+              "domain_id": "source_camera_image_px",
+              "geometry_type": "bbox_xyxy",
+              "pixel_convention": "pixel_edge_half_open",
+              "reference_extent_role": "source_camera_frame",
+              "schema_id": "palette.coordinate_surface_contract",
+              "schema_version": 1,
+              "source_camera_mapping": "direct_source_camera_continuous_pixels",
+              "surface_id": "source_camera_bbox_xyxy_v1"
+            },
+            {
+              "component_units": [
+                "px",
+                "px",
+                "px",
+                "px"
+              ],
+              "components": [
+                "x",
+                "y",
+                "width",
+                "height"
+              ],
+              "descriptor_overlay_status": "direct",
+              "descriptor_profile_id": "source_camera_image_px.top_left_y_down.v1",
+              "domain_id": "source_camera_image_px",
+              "geometry_type": "bbox_xywh",
+              "pixel_convention": "pixel_edge_half_open",
+              "reference_extent_role": "source_camera_frame",
+              "schema_id": "palette.coordinate_surface_contract",
+              "schema_version": 1,
+              "source_camera_mapping": "direct_source_camera_continuous_pixels",
+              "surface_id": "source_camera_crop_xywh_v1"
+            },
+            {
+              "component_units": [
+                "px",
+                "px"
+              ],
+              "components": [
+                "width",
+                "height"
+              ],
+              "descriptor_overlay_status": null,
+              "descriptor_profile_id": null,
+              "domain_id": "source_camera_image_px",
+              "geometry_type": "extent_wh",
+              "pixel_convention": "not_applicable",
+              "reference_extent_role": "source_camera_frame",
+              "schema_id": "palette.coordinate_surface_contract",
+              "schema_version": 1,
+              "source_camera_mapping": "not_positional_geometry",
+              "surface_id": "source_camera_extraction_extent_wh_v1"
+            },
+            {
+              "component_units": [
+                "px",
+                "px"
+              ],
+              "components": [
+                "x",
+                "y"
+              ],
+              "descriptor_overlay_status": "direct",
+              "descriptor_profile_id": "source_camera_image_px.top_left_y_down.v1",
+              "domain_id": "source_camera_image_px",
+              "geometry_type": "point_xy",
+              "pixel_convention": "continuous",
+              "reference_extent_role": "source_camera_frame",
+              "schema_id": "palette.coordinate_surface_contract",
+              "schema_version": 1,
+              "source_camera_mapping": "direct_source_camera_continuous_pixels",
+              "surface_id": "source_camera_extraction_origin_xy_v1"
+            },
+            {
+              "component_units": [
+                "normalized",
+                "normalized",
+                "normalized",
+                "normalized"
+              ],
+              "components": [
+                "center_x",
+                "center_y",
+                "width",
+                "height"
+              ],
+              "descriptor_overlay_status": "requires_transform",
+              "descriptor_profile_id": "source_camera_normalized_xy.top_left_y_down.v1",
+              "domain_id": "source_camera_normalized_xy",
+              "geometry_type": "bbox_cxcywh",
+              "pixel_convention": "continuous",
+              "reference_extent_role": "source_camera_frame",
+              "schema_id": "palette.coordinate_surface_contract",
+              "schema_version": 1,
+              "source_camera_mapping": "scale_by_source_camera_extent",
+              "surface_id": "source_camera_normalized_bbox_cxcywh_v1"
+            },
+            {
+              "component_units": [
+                "px",
+                "px"
+              ],
+              "components": [
+                "x",
+                "y"
+              ],
+              "descriptor_overlay_status": "direct",
+              "descriptor_profile_id": "source_camera_image_px.top_left_y_down.v1",
+              "domain_id": "source_camera_image_px",
+              "geometry_type": "point_xy",
+              "pixel_convention": "continuous",
+              "reference_extent_role": "source_camera_frame",
+              "schema_id": "palette.coordinate_surface_contract",
+              "schema_version": 1,
+              "source_camera_mapping": "direct_source_camera_continuous_pixels",
+              "surface_id": "source_camera_point_xy_v1"
+            }
+          ]
+        },
+        "schema_id": "palette.persisted_coordinate_catalog",
+        "schema_version": 1
+      },
+      "stage": "geometry_only_crop"
+    }
+  ],
+  "palette_commit": "154d788892aa8264d309258cc507d0d82a06e622",
+  "schema_id": "crimson.palette_coordinate_catalog_cross_language_fixture",
+  "schema_version": 1
+}

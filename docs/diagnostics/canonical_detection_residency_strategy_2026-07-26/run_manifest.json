@@ -1,0 +1,70 @@
+{
+  "binary": "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/canonical_detection_residency_benchmark",
+  "created_local": "2026-07-26T20:29:31-0400",
+  "crimson_commit": "34ff3c38229450b4e6bbe9b16fed99e9ca966197",
+  "crimson_status": "M .gitignore\n M CMakeLists.txt\n M CMakePresets.json\n M README.md\n M build_opencv_crimson.sh\n M cmake/CrimsonTensorStore.cmake\n M docs/crimson_app_architecture_refactor_todo.md\n M docs/crimson_gui_smoke_testing_todo.md\n M docs/crimson_macos_port_codex_goal.md\n M docs/crimson_subject_mask_editable_dense_storage_decision_2026-07-08.md\n M scripts/README.md\n M src/analysis_series_timeline.cpp\n M src/analysis_series_timeline.h\n M src/analysis_series_timeline_buffer.cpp\n M src/analysis_series_timeline_buffer.h\n M src/eye_angle_timeline.h\n M src/gui/camera_view_frame_context_builder.cpp\n M src/gui/camera_view_frame_context_builder.h\n M src/gui/camera_view_mask_overlay.cpp\n M src/gui/camera_view_overlay_renderer.h\n M src/gui/camera_view_presenter.cpp\n M src/gui/camera_view_stimulus_overlay.cpp\n M src/gui/camera_view_window.cpp\n M src/gui/camera_view_window.h\n M src/gui/frame_debug_status_panel.cpp\n M src/gui/frame_debug_window.h\n M src/gui/overlay_debug_panel.cpp\n M src/media_session_loader.cpp\n M src/media_session_loader.h\n M src/platform/macos/apple_overlay_metal_renderer.h\n M src/platform/macos/apple_overlay_metal_renderer.mm\n M src/platform/macos/apple_stimulus_playback_session.cpp\n M src/platform/macos/apple_stimulus_playback_session.h\n M src/platform/macos/apple_video_metal_renderer.h\n M src/platform/macos/apple_video_metal_renderer.mm\n M src/platform/macos/apple_video_playback_buffer.cpp\n M src/platform/macos/apple_video_playback_buffer.h\n M src/platform/macos/apple_video_viewer_ui.h\n M src/platform/macos/apple_video_viewer_ui.mm\n M src/platform/macos/crimson_macos_main.mm\n M src/playback_clock.cpp\n M src/playback_clock.h\n M src/playback_session_controller.cpp\n M src/playback_session_controller.h\n M src/red.cpp\n M src/subject_mask_overlay_buffer.cpp\n M src/subject_mask_overlay_buffer.h\n M src/zarr/archive_context.h\n M src/zarr/archive_context_internal.h\n M src/zarr/keypoint_overlay_repository.h\n M src/zarr/subject_mask_overlay_repository.h\n M src/zarr/tensorstore_analysis_crop_geometry_repository.cpp\n M src/zarr/tensorstore_analysis_series_timeline_repository.cpp\n M src/zarr/tensorstore_analysis_series_timeline_repository.h\n M src/zarr/tensorstore_archive_context.cpp\n M src/zarr/tensorstore_eye_angle_timeline_repository.cpp\n M src/zarr/tensorstore_eye_angle_timeline_repository.h\n M src/zarr/tensorstore_eye_geometry_overlay_repository.cpp\n M src/zarr/tensorstore_keypoint_overlay_repository.cpp\n M src/zarr/tensorstore_keypoint_overlay_repository.h\n M src/zarr/tensorstore_stimulus_context_timeline_repository.cpp\n M src/zarr/tensorstore_stimulus_repository.cpp\n M src/zarr/tensorstore_stimulus_repository.h\n M src/zarr/tensorstore_subject_mask_overlay_repository.cpp\n M src/zarr/tensorstore_subject_shape_overlay_repository.cpp\n M src/zarr_loader.h\n M src/zarr_loader_stimulus.cpp\n M tools/analysis_crop_geometry_repository_tests.cpp\n M tools/analysis_series_timeline_repository_tests.cpp\n M tools/analysis_series_timeline_tests.cpp\n M tools/apple_read_only_overlay_metal_tests.mm\n M tools/apple_stimulus_playback_tests.mm\n M tools/apple_video_metal_tests.mm\n M tools/build_opencv_ffmpeg_nvidia_linux.sh\n M tools/eye_angle_timeline_repository_tests.cpp\n M tools/eye_angle_timeline_tests.cpp\n M tools/frame_slot_tests.cpp\n M tools/keypoint_overlay_repository_probe.cpp\n M tools/keypoint_overlay_repository_tests.cpp\n M tools/subject_mask_overlay_repository_probe.cpp\n M tools/subject_mask_overlay_repository_tests.cpp\n?? cmake/CheckZarrLoaderDependencies.cmake\n?? cmake/CrimsonZarrLoaderDependencyPolicy.cmake\n?? docs/crimson_macos_internal_testing.md\n?? docs/crimson_macos_phase5k_swim_bout_timeline.md\n?? docs/crimson_macos_phase5l2_workspace_composition.md\n?? docs/crimson_macos_phase5l3_stable_workflows.md\n?? docs/crimson_macos_phase5l4_visual_acceptance.md\n?? docs/crimson_macos_phase5l_portable_workspace_state.md\n?? docs/crimson_macos_phase5l_workspace_inventory.md\n?? docs/crimson_macos_phase5l_workspace_parity_plan.md\n?? docs/crimson_macos_phase5m0_zarr_loader_inventory.md\n?? docs/crimson_macos_phase5m1_portable_polar_contract.md\n?? docs/crimson_macos_phase5m2_polar_storage_adapters.md\n?? docs/crimson_macos_phase5m3_shared_polar_scene.md\n?? docs/crimson_macos_phase5m4_cross_platform_acceptance.md\n?? docs/crimson_macos_phase5m_read_only_zarr_boundary_plan.md\n?? docs/crimson_macos_phase5n_remaining_stimulus_overlay_parity.md\n?? docs/crimson_macos_phase5o0_data_access_characterization.md\n?? docs/crimson_macos_phase5o1_portable_data_access_contract.md\n?? docs/crimson_macos_phase5o4_canonical_detection_storage_benchmark.md\n?? docs/crimson_macos_phase5o4_full_analysis_fixture_contract.md\n?? docs/crimson_macos_phase5o4_prefetch_cache_benchmark.md\n?? docs/crimson_macos_phase5o5_detection_layout_matrix_contract.md\n?? docs/crimson_macos_phase5o5_detection_residency_gate.md\n?? docs/crimson_macos_phase5o_bounded_data_access.md\n?? docs/crimson_shared_runtime_contracts_2026-07-23.md\n?? docs/crimson_subject_mask_sparse_index_storage_concept.md\n?? docs/diagnostics/\n?? docs/reference/\n?? scripts/capture_crimson_macos_polar_reference.sh\n?? scripts/capture_crimson_macos_stimulus_overlay_reference.sh\n?? scripts/capture_crimson_macos_workspace_reference.sh\n?? scripts/capture_redgui_polar_reference.sh\n?? scripts/capture_redgui_stimulus_overlay_reference.sh\n?? scripts/capture_redgui_workspace_reference.ps1\n?? scripts/capture_redgui_workspace_reference.sh\n?? scripts/package_crimson_macos_internal.sh\n?? src/canonical_detection_buffer.cpp\n?? src/canonical_detection_buffer.h\n?? src/chaser_distance_polar.cpp\n?? src/chaser_distance_polar.h\n?? src/chaser_distance_polar_buffer.cpp\n?? src/chaser_distance_polar_buffer.h\n?? src/chaser_distance_polar_scene.cpp\n?? src/chaser_distance_polar_scene.h\n?? src/data_access.cpp\n?? src/data_access.h\n?? src/data_access_cache.cpp\n?? src/data_access_cache.h\n?? src/data_access_scheduler.cpp\n?? src/data_access_scheduler.h\n?? src/diagnostic_report.cpp\n?? src/diagnostic_report.h\n?? src/frame_presentation.cpp\n?? src/frame_presentation.h\n?? src/gui/session_loading_modal.cpp\n?? src/gui/session_loading_modal.h\n?? src/imgui_semantic_snapshot.cpp\n?? src/imgui_semantic_snapshot.h\n?? src/keypoint_overlay_buffer.cpp\n?? src/keypoint_overlay_buffer.h\n?? src/loading_progress.cpp\n?? src/loading_progress.h\n?? src/platform/macos/apple_analysis_repository_loader.cpp\n?? src/platform/macos/apple_analysis_repository_loader.h\n?? src/platform/macos/apple_workspace_layout.cpp\n?? src/platform/macos/apple_workspace_layout.h\n?? src/recording_open_workflow.cpp\n?? src/recording_open_workflow.h\n?? src/roi_inset_presentation.h\n?? src/session_lifecycle.cpp\n?? src/session_lifecycle.h\n?? src/session_loading_presentation.cpp\n?? src/session_loading_presentation.h\n?? src/session_open_transaction.cpp\n?? src/session_open_transaction.h\n?? src/session_readiness.cpp\n?? src/session_readiness.h\n?? src/stimulus_camera_overlay_scene.cpp\n?? src/stimulus_camera_overlay_scene.h\n?? src/swim_bout_timeline.cpp\n?? src/swim_bout_timeline.h\n?? src/swim_bout_timeline_buffer.cpp\n?? src/swim_bout_timeline_buffer.h\n?? src/workspace_state.cpp\n?? src/workspace_state.h\n?? src/zarr/affiliated_video_repository.h\n?? src/zarr/canonical_detection_overlay_scene_adapter.cpp\n?? src/zarr/canonical_detection_overlay_scene_adapter.h\n?? src/zarr/canonical_detection_repository.h\n?? src/zarr/chaser_distance_polar_legacy_repository.h\n?? src/zarr/stimulus_context_timeline_legacy_repository.h\n?? src/zarr/tensorstore_affiliated_video_repository.cpp\n?? src/zarr/tensorstore_canonical_detection_repository.cpp\n?? src/zarr/tensorstore_canonical_detection_repository.h\n?? src/zarr/tensorstore_chaser_distance_polar_repository.cpp\n?? src/zarr/tensorstore_chaser_distance_polar_repository.h\n?? src/zarr/tensorstore_swim_bout_timeline_repository.cpp\n?? src/zarr/tensorstore_swim_bout_timeline_repository.h\n?? tools/affiliated_video_repository_probe.cpp\n?? tools/affiliated_video_repository_tests.cpp\n?? tools/apple_analysis_repository_loader_tests.cpp\n?? tools/apple_workspace_layout_tests.cpp\n?? tools/archive_context_tests.cpp\n?? tools/canonical_detection_full_archive_integration_gate.cpp\n?? tools/canonical_detection_full_archive_stage1_benchmark.cpp\n?? tools/canonical_detection_repository_tests.cpp\n?? tools/canonical_detection_residency_benchmark.cpp\n?? tools/canonical_detection_storage_benchmark.cpp\n?? tools/chaser_distance_polar_buffer_tests.cpp\n?? tools/chaser_distance_polar_contract_tests.cpp\n?? tools/chaser_distance_polar_legacy_probe.cpp\n?? tools/chaser_distance_polar_scene_tests.cpp\n?? tools/chaser_distance_polar_tensorstore_repository_tests.cpp\n?? tools/data_access_contract_tests.cpp\n?? tools/diagnostic_report_tests.cpp\n?? tools/frame_presentation_tests.cpp\n?? tools/imgui_semantic_snapshot_tests.cpp\n?? tools/loading_progress_tests.cpp\n?? tools/phase5l_workspace_compare.py\n?? tools/phase5m_polar_compare.py\n?? tools/phase5n_stimulus_overlay_compare.py\n?? tools/playback_transport_tests.cpp\n?? tools/plot_canonical_detection_prefetch_benchmark.py\n?? tools/plot_canonical_detection_residency_benchmark.py\n?? tools/plot_canonical_detection_storage_benchmark.py\n?? tools/recording_open_workflow_tests.cpp\n?? tools/roi_inset_presentation_tests.cpp\n?? tools/run_canonical_detection_full_archive_stage1.py\n?? tools/run_canonical_detection_prefetch_benchmark.py\n?? tools/run_canonical_detection_residency_benchmark.py\n?? tools/run_canonical_detection_storage_benchmark.py\n?? tools/session_lifecycle_tests.cpp\n?? tools/session_loading_presentation_tests.cpp\n?? tools/session_open_transaction_tests.cpp\n?? tools/session_readiness_tests.cpp\n?? tools/stimulus_camera_overlay_scene_tests.cpp\n?? tools/stimulus_context_timeline_legacy_probe.cpp\n?? tools/swim_bout_timeline_repository_probe.cpp\n?? tools/swim_bout_timeline_repository_tests.cpp\n?? tools/swim_bout_timeline_tests.cpp\n?? tools/tensorstore_array_access_benchmark.cpp\n?? tools/workspace_state_tests.cpp\n?? tools/workspace_workflow_tests.cpp",
+  "fixture_hashes": {
+    "hybrid_manifest.json": "51e4dd1ad35c3eb6481a15604e537dd756f7c4b29534f0081e5501a3c26bae74",
+    "pair_manifest.json": "25e49003d63f74e5c7f1aa940aa77acee8df0153476847afeb99b98238574432",
+    "publication_receipt.json": "22763ffce084446cfa797b567ebd7bb66d682e7e1f1f031e7af781c575fdcd1d",
+    "regular_manifest.json": "d84f2c982ec8983a5b437c2d539fe4a3966bcb36866f28fb9daa6c1724fef9f1"
+  },
+  "fixture_root": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1",
+  "limits": {
+    "cancellation_and_close_ms": 250.0,
+    "first_page_service_ms": 150.0,
+    "incremental_resident_rss_bytes": 67108864,
+    "peak_rss_bytes": 805306368,
+    "post_warmup_deadline_miss_rate": 0.01,
+    "resident_first_page_delta_ms": 25.0,
+    "resident_first_page_ratio": 1.1,
+    "resident_preload_file_bytes": 67108864,
+    "resident_preload_ms": 30000.0,
+    "resident_random_p95_ms": 5.0
+  },
+  "process_order": {
+    "0": [
+      "hybrid_paged",
+      "hybrid_resident",
+      "regular_paged",
+      "regular_resident"
+    ],
+    "1": [
+      "hybrid_resident",
+      "regular_resident",
+      "hybrid_paged",
+      "regular_paged"
+    ],
+    "2": [
+      "regular_paged",
+      "hybrid_paged",
+      "regular_resident",
+      "hybrid_resident"
+    ],
+    "3": [
+      "regular_resident",
+      "regular_paged",
+      "hybrid_resident",
+      "hybrid_paged"
+    ],
+    "4": [
+      "hybrid_paged",
+      "regular_paged",
+      "regular_resident",
+      "hybrid_resident"
+    ]
+  },
+  "quick": false,
+  "run": "crimson_storage_fixture_sleepyfish_cam2010095_v1",
+  "schema_id": "crimson.canonical_detection_residency_run_manifest",
+  "schema_version": 1,
+  "system": {
+    "machine": "arm64",
+    "macos": "ProductName:\t\tmacOS\nProductVersion:\t\t26.3.1\nBuildVersion:\t\t25D2128",
+    "mount": "/dev/disk3s1s1 on / (apfs, sealed, local, read-only, journaled)\ndevfs on /dev (devfs, local, nobrowse)\n/dev/disk3s6 on /System/Volumes/VM (apfs, local, noexec, journaled, noatime, nobrowse)\n/dev/disk3s2 on /System/Volumes/Preboot (apfs, local, journaled, nobrowse)\n/dev/disk3s4 on /System/Volumes/Update (apfs, local, journaled, nobrowse)\n/dev/disk1s2 on /System/Volumes/xarts (apfs, local, noexec, journaled, noatime, nobrowse)\n/dev/disk1s1 on /System/Volumes/iSCPreboot (apfs, local, journaled, nobrowse)\n/dev/disk1s3 on /System/Volumes/Hardware (apfs, local, journaled, nobrowse)\n/dev/disk3s5 on /System/Volumes/Data (apfs, local, journaled, nobrowse, protect, root data)\nmap auto_home on /System/Volumes/Data/home (autofs, automounted, nobrowse)\n/dev/disk2s1 on /System/Volumes/Update/SFR/mnt1 (apfs, local, journaled, nobrowse)\n//delahantyj@prfs.hhmi.org/johnsonlab on /Volumes/johnsonlab (smbfs, nodev, nosuid, mounted by jmdelahanty)\n/dev/disk3s1 on /System/Volumes/Update/mnt1 (apfs, sealed, local, journaled, nobrowse)",
+    "platform": "macOS-26.3.1-arm64-arm-64bit",
+    "python": "3.10.14 | packaged by conda-forge | (main, Mar 20 2024, 12:51:49) [Clang 16.0.6 ]"
+  },
+  "workload": "/Users/jmdelahanty/gitrepos/crimson-macos/docs/reference/crimson_canonical_detection_layout_matrix_workload_v1.json",
+  "workload_sha256": "75d958f7ef4a7162b9b945a210c25de26fb7c3020ed7e9d9551753875bcb6d57"
+}

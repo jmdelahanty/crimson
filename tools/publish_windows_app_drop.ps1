@@ -22,19 +22,28 @@ if ([string]::IsNullOrWhiteSpace($StageRoot)) {
     $StageRoot = Join-Path $RepoRoot "dist/Crimson"
 }
 
-function Require-ExistingCandidate {
+function Require-Path {
     param(
-        [string]$Label,
-        [string[]]$Candidates
+        [string]$PathValue,
+        [string]$Label
     )
 
-    foreach ($candidate in $Candidates) {
-        if (Test-Path -LiteralPath $candidate) {
-            return $candidate
-        }
+    if (-not (Test-Path -LiteralPath $PathValue)) {
+        throw "$Label not found: $PathValue"
     }
 
-    throw "$Label not found. Checked: $($Candidates -join ', ')"
+    return $PathValue
+}
+
+function Assert-MissingPath {
+    param(
+        [string]$PathValue,
+        [string]$Label
+    )
+
+    if (Test-Path -LiteralPath $PathValue) {
+        throw "$Label should not exist: $PathValue`nClean the staged install tree and reinstall so the Windows app layout is consistent."
+    }
 }
 
 function Copy-AppTree {
@@ -74,13 +83,14 @@ function Write-JsonFile {
     }
 
     $json = $Data | ConvertTo-Json -Depth 8
-    [System.IO.File]::WriteAllText($PathValue, $json + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
+    [System.IO.File]::WriteAllText(
+        $PathValue,
+        $json + [Environment]::NewLine,
+        [System.Text.UTF8Encoding]::new($false))
 }
 
 function Try-GetGitString {
-    param(
-        [string[]]$Arguments
-    )
+    param([string[]]$Arguments)
 
     try {
         $result = & git -C $RepoRoot @Arguments 2>$null
@@ -93,41 +103,39 @@ function Try-GetGitString {
     return ""
 }
 
-function Assert-MissingPath {
-    param(
-        [string]$PathValue,
-        [string]$Label
-    )
+function New-DefaultReleaseName {
+    param([string]$CommitShort)
 
-    if (Test-Path -LiteralPath $PathValue) {
-        throw "$Label should not exist: $PathValue`nClean the staged install tree and reinstall so the Windows app layout is consistent."
-    }
-}
-
-function Require-Path {
-    param(
-        [string]$PathValue,
-        [string]$Label
-    )
-
-    if (-not (Test-Path -LiteralPath $PathValue)) {
-        throw "$Label not found: $PathValue"
+    $timestamp = Get-Date -Format "yyyy-MM-dd_HHmmss"
+    if (-not [string]::IsNullOrWhiteSpace($CommitShort)) {
+        return "${timestamp}_${CommitShort}"
     }
 
-    return $PathValue
+    return $timestamp
 }
 
-Require-Path -PathValue $StageRoot -Label "Stage root"
+function Test-AppDropLayout {
+    param([string]$Root)
+
+    Require-Path -PathValue (Join-Path $Root "bin/redgui.exe") -Label "redgui.exe" | Out-Null
+    Assert-MissingPath -PathValue (Join-Path $Root "redgui.exe") -Label "Legacy root redgui.exe"
+    Require-Path -PathValue (Join-Path $Root "install_crimson.ps1") -Label "install_crimson.ps1" | Out-Null
+    Require-Path -PathValue (Join-Path $Root "install_crimson.cmd") -Label "install_crimson.cmd" | Out-Null
+    Require-Path -PathValue (Join-Path $Root "check_crimson_runtime.ps1") -Label "check_crimson_runtime.ps1" | Out-Null
+    Require-Path -PathValue (Join-Path $Root "check_crimson_runtime.cmd") -Label "check_crimson_runtime.cmd" | Out-Null
+    Require-Path -PathValue (Join-Path $Root "set_crimson_cuda_device.ps1") -Label "set_crimson_cuda_device.ps1" | Out-Null
+    Require-Path -PathValue (Join-Path $Root "set_crimson_cuda_device.cmd") -Label "set_crimson_cuda_device.cmd" | Out-Null
+    Require-Path -PathValue (Join-Path $Root "README.txt") -Label "README.txt" | Out-Null
+    Require-Path -PathValue (Join-Path $Root "share/crimson/fonts") -Label "Fonts directory" | Out-Null
+    Require-Path -PathValue (Join-Path $Root "share/crimson/config") -Label "Config directory" | Out-Null
+}
+
+$StageRoot = [System.IO.Path]::GetFullPath($StageRoot)
+$RepoRoot = [System.IO.Path]::GetFullPath($RepoRoot)
+
+Require-Path -PathValue $StageRoot -Label "Stage root" | Out-Null
 New-Item -ItemType Directory -Force -Path $ShareRoot | Out-Null
-
-$stageExe = Require-Path -PathValue (Join-Path $StageRoot "bin/redgui.exe") -Label "Staged redgui.exe"
-Assert-MissingPath -PathValue (Join-Path $StageRoot "redgui.exe") -Label "Legacy staged redgui.exe"
-$stageInstallScript = Require-Path -PathValue (Join-Path $StageRoot "install_crimson.ps1") -Label "Staged install_crimson.ps1"
-$stageInstallWrapper = Require-Path -PathValue (Join-Path $StageRoot "install_crimson.cmd") -Label "Staged install_crimson.cmd"
-$stageReadme = Require-Path -PathValue (Join-Path $StageRoot "README.txt") -Label "Staged README.txt"
-
-$fontsDir = Require-Path -PathValue (Join-Path $StageRoot "share/crimson/fonts") -Label "Fonts directory"
-$configDir = Require-Path -PathValue (Join-Path $StageRoot "share/crimson/config") -Label "Config directory"
+Test-AppDropLayout -Root $StageRoot
 
 $publishTimestampUtc = Get-UtcTimestampString
 $repoCommit = Try-GetGitString -Arguments @("rev-parse", "HEAD")
@@ -138,12 +146,11 @@ $currentRoot = Join-Path $ShareRoot $CurrentName
 
 if (-not [string]::IsNullOrWhiteSpace($ReleaseName) -or $PublishCurrent -or $ArchiveExistingCurrent) {
     if ([string]::IsNullOrWhiteSpace($ReleaseName)) {
-        $ReleaseName = Get-Date -Format "yyyy-MM-dd_HHmmss"
+        $ReleaseName = New-DefaultReleaseName -CommitShort $repoCommitShort
     }
 
     $releasesRoot = Join-Path $ShareRoot $ReleasesDirName
     $releaseRoot = Join-Path $releasesRoot $ReleaseName
-
     New-Item -ItemType Directory -Force -Path $releasesRoot | Out-Null
 
     if (Test-Path -LiteralPath $releaseRoot) {
@@ -151,12 +158,10 @@ if (-not [string]::IsNullOrWhiteSpace($ReleaseName) -or $PublishCurrent -or $Arc
     }
 
     if ($ArchiveExistingCurrent -and (Test-Path -LiteralPath $currentRoot)) {
-        $archivedCurrentName = "current-before-$ReleaseName"
-        $archivedCurrentRoot = Join-Path $releasesRoot $archivedCurrentName
+        $archivedCurrentRoot = Join-Path $releasesRoot "current-before-$ReleaseName"
         if (Test-Path -LiteralPath $archivedCurrentRoot) {
             throw "Archived current target already exists: $archivedCurrentRoot"
         }
-
         Copy-AppTree -SourceRoot $currentRoot -TargetRoot $archivedCurrentRoot -Label "archived current app drop"
     }
 
@@ -173,49 +178,13 @@ if (-not [string]::IsNullOrWhiteSpace($ReleaseName) -or $PublishCurrent -or $Arc
         published_target_root = $releaseRoot
     }
     Write-JsonFile -PathValue (Join-Path $releaseRoot "release.json") -Data $releaseMetadata
-
-    $publishedExe = Require-Path -PathValue (Join-Path $releaseRoot "bin/redgui.exe") -Label "Published release redgui.exe"
-    Assert-MissingPath -PathValue (Join-Path $releaseRoot "redgui.exe") -Label "Legacy published release redgui.exe"
-    $publishedInstallScript = Require-Path -PathValue (Join-Path $releaseRoot "install_crimson.ps1") -Label "Published release install_crimson.ps1"
-    $publishedInstallWrapper = Require-Path -PathValue (Join-Path $releaseRoot "install_crimson.cmd") -Label "Published release install_crimson.cmd"
-    $publishedReadme = Require-Path -PathValue (Join-Path $releaseRoot "README.txt") -Label "Published release README.txt"
-    $publishedReleaseMetadata = Require-Path -PathValue (Join-Path $releaseRoot "release.json") -Label "Published release release.json"
-
-    Write-Host ""
-    Write-Host "Published Crimson Windows versioned release:"
-    Write-Host "  $releaseRoot"
-    Write-Host ""
-    Write-Host "Verified release:"
-    Write-Host "  app:    $publishedExe"
-    Write-Host "  install script: $publishedInstallScript"
-    Write-Host "  install wrapper: $publishedInstallWrapper"
-    Write-Host "  readme: $publishedReadme"
-    Write-Host "  release metadata: $publishedReleaseMetadata"
-    Write-Host "  fonts:  $(Join-Path $releaseRoot 'share/crimson/fonts')"
-    Write-Host "  config: $(Join-Path $releaseRoot 'share/crimson/config')"
+    Test-AppDropLayout -Root $releaseRoot
+    Require-Path -PathValue (Join-Path $releaseRoot "release.json") -Label "Published release metadata" | Out-Null
 
     if ($PublishCurrent) {
         Copy-AppTree -SourceRoot $releaseRoot -TargetRoot $currentRoot -Label "current Crimson app drop" -CleanTarget
-
-        $currentExe = Require-Path -PathValue (Join-Path $currentRoot "bin/redgui.exe") -Label "Published current redgui.exe"
-        Assert-MissingPath -PathValue (Join-Path $currentRoot "redgui.exe") -Label "Legacy published current redgui.exe"
-        $currentInstallScript = Require-Path -PathValue (Join-Path $currentRoot "install_crimson.ps1") -Label "Published current install_crimson.ps1"
-        $currentInstallWrapper = Require-Path -PathValue (Join-Path $currentRoot "install_crimson.cmd") -Label "Published current install_crimson.cmd"
-        $currentReadme = Require-Path -PathValue (Join-Path $currentRoot "README.txt") -Label "Published current README.txt"
-        $currentReleaseMetadata = Require-Path -PathValue (Join-Path $currentRoot "release.json") -Label "Published current release.json"
-
-        Write-Host ""
-        Write-Host "Refreshed current Crimson Windows app drop:"
-        Write-Host "  $currentRoot"
-        Write-Host ""
-        Write-Host "Verified current:"
-        Write-Host "  app:    $currentExe"
-        Write-Host "  install script: $currentInstallScript"
-        Write-Host "  install wrapper: $currentInstallWrapper"
-        Write-Host "  readme: $currentReadme"
-        Write-Host "  release metadata: $currentReleaseMetadata"
-        Write-Host "  fonts:  $(Join-Path $currentRoot 'share/crimson/fonts')"
-        Write-Host "  config: $(Join-Path $currentRoot 'share/crimson/config')"
+        Test-AppDropLayout -Root $currentRoot
+        Require-Path -PathValue (Join-Path $currentRoot "release.json") -Label "Published release metadata" | Out-Null
     }
 
     $latestMetadata = [ordered]@{
@@ -229,14 +198,17 @@ if (-not [string]::IsNullOrWhiteSpace($ReleaseName) -or $PublishCurrent -or $Arc
         release_root = $releaseRoot
     }
     Write-JsonFile -PathValue $latestManifestPath -Data $latestMetadata
-    $publishedLatestMetadata = Require-Path -PathValue $latestManifestPath -Label "Published latest.json"
 
     Write-Host ""
-    Write-Host "Published latest metadata:"
-    Write-Host "  $publishedLatestMetadata"
+    Write-Host "Published Crimson Windows versioned release:"
+    Write-Host "  $releaseRoot"
+    if ($PublishCurrent) {
+        Write-Host "Refreshed current app drop:"
+        Write-Host "  $currentRoot"
+    }
 } else {
     $effectiveReleaseName = if ([string]::IsNullOrWhiteSpace($ReleaseName)) {
-        Get-Date -Format "yyyy-MM-dd_HHmmss"
+        New-DefaultReleaseName -CommitShort $repoCommitShort
     } else {
         $ReleaseName
     }
@@ -259,26 +231,8 @@ if (-not [string]::IsNullOrWhiteSpace($ReleaseName) -or $PublishCurrent -or $Arc
         published_target_root = $targetRoot
     }
     Write-JsonFile -PathValue (Join-Path $targetRoot "release.json") -Data $releaseMetadata
-
-    $publishedExe = Require-Path -PathValue (Join-Path $targetRoot "bin/redgui.exe") -Label "Published redgui.exe"
-    Assert-MissingPath -PathValue (Join-Path $targetRoot "redgui.exe") -Label "Legacy published redgui.exe"
-    $publishedInstallScript = Require-Path -PathValue (Join-Path $targetRoot "install_crimson.ps1") -Label "Published install_crimson.ps1"
-    $publishedInstallWrapper = Require-Path -PathValue (Join-Path $targetRoot "install_crimson.cmd") -Label "Published install_crimson.cmd"
-    $publishedReadme = Require-Path -PathValue (Join-Path $targetRoot "README.txt") -Label "Published README.txt"
-    $publishedReleaseMetadata = Require-Path -PathValue (Join-Path $targetRoot "release.json") -Label "Published release.json"
-
-    Write-Host ""
-    Write-Host "Published Crimson Windows app drop:"
-    Write-Host "  $targetRoot"
-    Write-Host ""
-    Write-Host "Verified:"
-    Write-Host "  app:    $publishedExe"
-    Write-Host "  install script: $publishedInstallScript"
-    Write-Host "  install wrapper: $publishedInstallWrapper"
-    Write-Host "  readme: $publishedReadme"
-    Write-Host "  release metadata: $publishedReleaseMetadata"
-    Write-Host "  fonts:  $(Join-Path $targetRoot 'share/crimson/fonts')"
-    Write-Host "  config: $(Join-Path $targetRoot 'share/crimson/config')"
+    Test-AppDropLayout -Root $targetRoot
+    Require-Path -PathValue (Join-Path $targetRoot "release.json") -Label "Published release metadata" | Out-Null
 
     $latestMetadata = [ordered]@{
         schema_version = 1
@@ -291,9 +245,12 @@ if (-not [string]::IsNullOrWhiteSpace($ReleaseName) -or $PublishCurrent -or $Arc
         release_root = $targetRoot
     }
     Write-JsonFile -PathValue $latestManifestPath -Data $latestMetadata
-    $publishedLatestMetadata = Require-Path -PathValue $latestManifestPath -Label "Published latest.json"
 
     Write-Host ""
-    Write-Host "Published latest metadata:"
-    Write-Host "  $publishedLatestMetadata"
+    Write-Host "Published Crimson Windows app drop:"
+    Write-Host "  $targetRoot"
 }
+
+Write-Host ""
+Write-Host "Published latest metadata:"
+Write-Host "  $latestManifestPath"

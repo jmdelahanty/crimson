@@ -7,6 +7,9 @@ Date anchored: 2026-02-10.
 
 Detect analog: `docs/crimson_refined_detect_manual_contract.md`
 
+Derived metric generalization:
+- `docs/crimson_derived_metrics_contract.md`
+
 ## Scope
 
 This contract is for updating:
@@ -36,16 +39,33 @@ Given `run_name = refined_keypoints_runs.attrs["latest"]`:
 
 When saving a manual keypoint correction for ROI index `roi_idx`:
 
-1. `keypoints_roi[roi_idx]` (`float64`, shape `(3, 2)`) — corrected keypoints in ROI pixels
-2. `keypoints_img[roi_idx]` (`float64`, shape `(3, 2)`) — full-image pixels:
+Let:
+- `n_keypoints = keypoints_roi.shape[1]` on the target refined run
+- `coord_dims = keypoints_roi.shape[2]` on the target refined run (`coord_dims >= 2`)
+- keypoint labels/edges/heading metadata come from the run schema (`keypoint_labels`,
+  `pose_schema`, `pose_schema.metadata.heading_computation`) when present
+
+Crimson must treat the existing refined-run array shape as authoritative and
+write a full row matching that schema. Do not hard-code a 3-point layout.
+
+1. `keypoints_roi[roi_idx]` (`float64`, shape `(n_keypoints, coord_dims)`) — corrected keypoints in ROI pixels
+   - overwrite XY from the operator edit for all keypoints
+   - if `coord_dims > 2`, preserve existing trailing dimensions in-place
+2. `keypoints_img[roi_idx]` (`float64`, shape `(n_keypoints, coord_dims)`) — full-image pixels:
    - `keypoints_img = keypoints_roi + roi_coordinates_full[roi_idx]`
-3. `keypoints_norm[roi_idx]` (`float64`, shape `(3, 2)`) — normalized:
+   - apply the ROI offset to XY only
+   - if `coord_dims > 2`, preserve existing trailing dimensions in-place
+3. `keypoints_norm[roi_idx]` (`float64`, shape `(n_keypoints, coord_dims)`) — normalized:
    - `keypoints_norm = keypoints_img / [full_width, full_height]`
+   - normalize XY only
+   - if `coord_dims > 2`, preserve existing trailing dimensions in-place
 4. `heading[roi_idx]` (`float64`, scalar) — recomputed from corrected points:
-   - Use `_compute_heading_from_points(bladder, eye_left, eye_right)` logic
+   - Use the run's heading metadata / dependent keypoints when available
    - If geometry is degenerate/non-finite, heading may be `NaN`; this is allowed.
 
-Keypoint order: `[bladder, eye_left, eye_right]`.
+If `derived_metrics_schema` is present on the run, treat it as authoritative for
+derived metric semantics. The keypoint-specific triangle rules below describe the
+current fallback contract when no generalized metric schema is available.
 
 ## Geometry Recomputation Requirement
 
@@ -54,10 +74,31 @@ derived geometry arrays. This mirrors
 `compute_geometry_metrics()` in `fisheye.refinement.keypoint_quality` and the
 `save_current()` logic in `keypoint_failure_review.py:459`.
 
-### Step 1: Compute triangle metrics
+### Step 1: Resolve the geometry triad
+
+The quality arrays `triangle_area`, `triangle_angles`, and `min_angle` are still
+legacy 3-point outputs. Crimson must resolve the three geometry landmarks in
+this order:
+
+1. If `derived_metrics_schema` declares a compatible `keypoint_roi` /
+   `triangle_3pt` metric whose source is `keypoints_roi` and whose outputs are
+   `triangle_area`, `triangle_angles`, and `min_angle`, use that metric's
+   `selectors.labels` or `selectors.indices`. Crimson accepts selectors either
+   at metric level or under `source`, and accepts both `point_xy` and
+   `points_xy` source value-kind spellings.
+2. Otherwise, use the legacy fallback:
+   - `heading_computation.dependent_indices` if it contains exactly 3 unique
+     valid indices.
+   - labels matching swim/bladder + left + right.
+   - `[0, 1, 2]` only for true 3-keypoint runs.
+
+If no geometry triad can be resolved, geometry metrics remain `NaN` and
+`geometry_valid` becomes `False`.
+
+### Step 2: Compute triangle metrics
 
 ```
-metrics = compute_geometry_metrics(keypoints_roi[roi_idx])
+metrics = compute_geometry_metrics(keypoints_roi[roi_idx][geometry_indices])
 # Returns: area (float), angles (3,), min_angle (float), max_angle (float), edge_lengths (3,)
 ```
 
@@ -68,15 +109,22 @@ The geometry is computed from the three keypoint vertices:
 
 If any vertex contains NaN, all metrics become NaN.
 
-### Step 2: Write geometry arrays
+### Step 3: Write geometry arrays
 
 - `triangle_area[roi_idx]` = `metrics.area`
 - `min_angle[roi_idx]` = `metrics.min_angle`
 - `triangle_angles[roi_idx]` = `metrics.angles` (shape `(3,)`)
 
-### Step 3: Evaluate quality flags
+### Step 4: Evaluate quality flags
 
-Threshold values are read from `refined.attrs["summary_statistics"]["refine"]`:
+When `derived_metrics_schema.quality_gates` declares `geometry_valid`, Crimson
+uses that gate to evaluate `geometry_valid`. Crimson accepts `output_array` or
+`output.array`, `combine="all"` or `evaluation="all_conditions"`, and both
+symbolic ops (`>=`, `<=`, `is_finite`) and normalized ops (`gte`, `lte`,
+`isfinite`).
+
+Fallback threshold values are read from
+`refined.attrs["summary_statistics"]["refine"]`:
 - `confidence_threshold` (default: `0.3`)
 - `min_triangle_angle` (default: `10.0` degrees)
 - `min_triangle_area` (default: `100.0` pixels²)
@@ -85,11 +133,11 @@ Threshold values are read from `refined.attrs["summary_statistics"]["refine"]`:
 Compute:
 - `geometry_valid = (min_angle >= min_triangle_angle) and (area >= min_triangle_area) and (max_triangle_area is None or area <= max_triangle_area)`
 - `confidence_valid = all(keypoint_confidences[roi_idx] >= confidence_threshold)`
-  - For manual corrections, set `keypoint_confidences[roi_idx] = [1.0, 1.0, 1.0]`
+  - If `keypoint_confidences` exists, set every value in that row to `1.0`
   - Set `confidence[roi_idx] = 1.0`
 - `usable_keypoints = confidence_valid and geometry_valid`
 
-### Step 4: Write quality/status arrays
+### Step 5: Write quality/status arrays
 
 - `refined_success[roi_idx]` = `True`
 - `flip_corrected[roi_idx]` = `False`
@@ -108,7 +156,7 @@ Legacy comparison:
 - Prior `heading_valid` represented `refined_success && detection_source==0`.
 - `heading_usable` is stricter: prior gate **and** `heading_finite`.
 
-### Step 5: Update reason tag
+### Step 6: Update reason tag
 
 Read existing reason label for `roi_idx` (prefer `reason_bytes`, fallback `reason`), then:
 1. Split on `|`, remove tags: `detection_failed`, `low_confidence`,
@@ -277,6 +325,7 @@ already consumes the names listed above.
 
 ## Related Documents
 
+- `docs/crimson_derived_metrics_contract.md`
 - `docs/crimson_refined_detect_manual_contract.md`
 - `docs/crimson_keypoint_read_contract.md`
 - `docs/crimson_keypoint_review_acceptance_contract.md`

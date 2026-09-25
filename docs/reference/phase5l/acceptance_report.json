@@ -1,0 +1,748 @@
+{
+  "captures": {
+    "analysis-eye": {
+      "linux": {
+        "image": "docs/reference/phase5l/linux/analysis_eye_exact_f000056_1920x1080.png",
+        "marker": "docs/reference/phase5l/linux/analysis_eye_exact_f000056_1920x1080.ui-reference.json"
+      },
+      "macos": {
+        "image": "docs/reference/phase5l/macos/analysis_eye_exact_f000056_1920x1080.ui-reference.json.png",
+        "marker": "docs/reference/phase5l/macos/analysis_eye_exact_f000056_1920x1080.ui-reference.json"
+      }
+    },
+    "crop-preview": {
+      "linux": {
+        "image": "docs/reference/phase5l/linux/crop_preview_exact_f000056_1920x1080.png",
+        "marker": "docs/reference/phase5l/linux/crop_preview_exact_f000056_1920x1080.ui-reference.json"
+      },
+      "macos": {
+        "image": "docs/reference/phase5l/macos/crop_preview_exact_f000056_1920x1080.ui-reference.json.png",
+        "marker": "docs/reference/phase5l/macos/crop_preview_exact_f000056_1920x1080.ui-reference.json"
+      }
+    },
+    "overlays": {
+      "linux": {
+        "image": "docs/reference/phase5l/linux/overlays_exact_f000056_1920x1080.png",
+        "marker": "docs/reference/phase5l/linux/overlays_exact_f000056_1920x1080.ui-reference.json"
+      },
+      "macos": {
+        "image": "docs/reference/phase5l/macos/overlays_exact_f000056_1920x1080.ui-reference.json.png",
+        "marker": "docs/reference/phase5l/macos/overlays_exact_f000056_1920x1080.ui-reference.json"
+      }
+    },
+    "stimulus-debug": {
+      "linux": {
+        "image": "docs/reference/phase5l/linux/stimulus_debug_exact_f001024_1920x1080.png",
+        "marker": "docs/reference/phase5l/linux/stimulus_debug_exact_f001024_1920x1080.ui-reference.json"
+      },
+      "macos": {
+        "image": "docs/reference/phase5l/macos/stimulus_debug_exact_f001024_1920x1080.ui-reference.json.png",
+        "marker": "docs/reference/phase5l/macos/stimulus_debug_exact_f001024_1920x1080.ui-reference.json"
+      }
+    },
+    "workspace": {
+      "linux": {
+        "image": "docs/reference/phase5l/linux/workspace_exact_f000056_1920x1080.png",
+        "marker": "docs/reference/phase5l/linux/workspace_exact_f000056_1920x1080.ui-reference.json"
+      },
+      "macos": {
+        "image": "docs/reference/phase5l/macos/workspace_exact_f000056_1920x1080.ui-reference.json.png",
+        "marker": "docs/reference/phase5l/macos/workspace_exact_f000056_1920x1080.ui-reference.json"
+      }
+    }
+  },
+  "checks": [
+    {
+      "frame": 56,
+      "id": "workspace.linux.capture-contract",
+      "image_size": {
+        "height": 1080,
+        "width": 1920
+      },
+      "logical_size": {
+        "height": 1080,
+        "width": 1920
+      },
+      "passed": true,
+      "stable_frames": 60,
+      "state": "workspace"
+    },
+    {
+      "id": "workspace.linux.state-content-ready",
+      "passed": true
+    },
+    {
+      "frame": 56,
+      "id": "workspace.macos.capture-contract",
+      "image_size": {
+        "height": 1080,
+        "width": 1920
+      },
+      "logical_size": {
+        "height": 1080,
+        "width": 1920
+      },
+      "passed": true,
+      "stable_frames": 60,
+      "state": "workspace"
+    },
+    {
+      "id": "workspace.macos.state-content-ready",
+      "passed": true
+    },
+    {
+      "expected": [
+        "File Browser",
+        "Frame Inspect",
+        "Diagnostics",
+        "Frames in the buffer",
+        "camera",
+        "Stimulus Event Timeline",
+        "Analysis Timeline"
+      ],
+      "id": "workspace.window-presence-order",
+      "linux": [
+        "File Browser",
+        "Frame Inspect",
+        "Diagnostics",
+        "Frames in the buffer",
+        "camera",
+        "Stimulus Event Timeline",
+        "Analysis Timeline"
+      ],
+      "macos": [
+        "File Browser",
+        "Frame Inspect",
+        "Diagnostics",
+        "Frames in the buffer",
+        "camera",
+        "Stimulus Event Timeline",
+        "Analysis Timeline"
+      ],
+      "passed": true
+    },
+    {
+      "hierarchy_labels_equal": true,
+      "id": "workspace.window-hierarchy-labels-bounds",
+      "max_bounds_delta_px": 0.0,
+      "passed": true,
+      "tolerance_px": 0.5
+    },
+    {
+      "id": "workspace.camera-surface-anchor",
+      "max_anchor_delta_px": 0.0,
+      "passed": true,
+      "semantic_labels": {
+        "linux": "Cam2010093_2026-06-14T21-12-08Z_arena_1/scene view0_A4762B04",
+        "macos": "##camera-presentation"
+      },
+      "tolerance_px": 0.5
+    },
+    {
+      "id": "workspace.camera-transport-label-order-anchor",
+      "labels": [
+        "\uf049",
+        "\uf048",
+        "\uf04b",
+        "\uf051",
+        "\uf050"
+      ],
+      "max_anchor_delta_px": 0.0,
+      "passed": true,
+      "tolerance_px": 0.5
+    },
+    {
+      "expected": [
+        56,
+        57,
+        58,
+        59,
+        60,
+        61
+      ],
+      "id": "workspace.buffered-frame-identity-order",
+      "linux": [
+        56,
+        57,
+        58,
+        59,
+        60,
+        61
+      ],
+      "macos": [
+        56,
+        57,
+        58,
+        59,
+        60,
+        61
+      ],
+      "passed": true
+    },
+    {
+      "frame": 56,
+      "id": "overlays.linux.capture-contract",
+      "image_size": {
+        "height": 1080,
+        "width": 1920
+      },
+      "logical_size": {
+        "height": 1080,
+        "width": 1920
+      },
+      "passed": true,
+      "stable_frames": 60,
+      "state": "overlays"
+    },
+    {
+      "id": "overlays.linux.state-content-ready",
+      "passed": true
+    },
+    {
+      "frame": 56,
+      "id": "overlays.macos.capture-contract",
+      "image_size": {
+        "height": 1080,
+        "width": 1920
+      },
+      "logical_size": {
+        "height": 1080,
+        "width": 1920
+      },
+      "passed": true,
+      "stable_frames": 60,
+      "state": "overlays"
+    },
+    {
+      "id": "overlays.macos.state-content-ready",
+      "passed": true
+    },
+    {
+      "expected": [
+        "File Browser",
+        "Frame Inspect",
+        "Diagnostics",
+        "Frames in the buffer",
+        "camera",
+        "Stimulus Event Timeline",
+        "Analysis Timeline"
+      ],
+      "id": "overlays.window-presence-order",
+      "linux": [
+        "File Browser",
+        "Frame Inspect",
+        "Diagnostics",
+        "Frames in the buffer",
+        "camera",
+        "Stimulus Event Timeline",
+        "Analysis Timeline"
+      ],
+      "macos": [
+        "File Browser",
+        "Frame Inspect",
+        "Diagnostics",
+        "Frames in the buffer",
+        "camera",
+        "Stimulus Event Timeline",
+        "Analysis Timeline"
+      ],
+      "passed": true
+    },
+    {
+      "hierarchy_labels_equal": true,
+      "id": "overlays.window-hierarchy-labels-bounds",
+      "max_bounds_delta_px": 0.0,
+      "passed": true,
+      "tolerance_px": 0.5
+    },
+    {
+      "id": "overlays.camera-surface-anchor",
+      "max_anchor_delta_px": 0.0,
+      "passed": true,
+      "semantic_labels": {
+        "linux": "Cam2010093_2026-06-14T21-12-08Z_arena_1/scene view0_A4762B04",
+        "macos": "##camera-presentation"
+      },
+      "tolerance_px": 0.5
+    },
+    {
+      "id": "overlays.camera-transport-label-order-anchor",
+      "labels": [
+        "\uf049",
+        "\uf048",
+        "\uf04b",
+        "\uf051",
+        "\uf050"
+      ],
+      "max_anchor_delta_px": 0.0,
+      "passed": true,
+      "tolerance_px": 0.5
+    },
+    {
+      "expected": [
+        56,
+        57,
+        58,
+        59,
+        60,
+        61
+      ],
+      "id": "overlays.buffered-frame-identity-order",
+      "linux": [
+        56,
+        57,
+        58,
+        59,
+        60,
+        61
+      ],
+      "macos": [
+        56,
+        57,
+        58,
+        59,
+        60,
+        61
+      ],
+      "passed": true
+    },
+    {
+      "frame": 56,
+      "id": "crop-preview.linux.capture-contract",
+      "image_size": {
+        "height": 1080,
+        "width": 1920
+      },
+      "logical_size": {
+        "height": 1080,
+        "width": 1920
+      },
+      "passed": true,
+      "stable_frames": 60,
+      "state": "crop-preview"
+    },
+    {
+      "id": "crop-preview.linux.state-content-ready",
+      "passed": true
+    },
+    {
+      "frame": 56,
+      "id": "crop-preview.macos.capture-contract",
+      "image_size": {
+        "height": 1080,
+        "width": 1920
+      },
+      "logical_size": {
+        "height": 1080,
+        "width": 1920
+      },
+      "passed": true,
+      "stable_frames": 60,
+      "state": "crop-preview"
+    },
+    {
+      "id": "crop-preview.macos.state-content-ready",
+      "passed": true
+    },
+    {
+      "expected": [
+        "File Browser",
+        "Frame Inspect",
+        "Diagnostics",
+        "Frames in the buffer",
+        "camera",
+        "Advanced Crop Preview",
+        "Stimulus Event Timeline",
+        "Analysis Timeline"
+      ],
+      "id": "crop-preview.window-presence-order",
+      "linux": [
+        "File Browser",
+        "Frame Inspect",
+        "Diagnostics",
+        "Frames in the buffer",
+        "camera",
+        "Advanced Crop Preview",
+        "Stimulus Event Timeline",
+        "Analysis Timeline"
+      ],
+      "macos": [
+        "File Browser",
+        "Frame Inspect",
+        "Diagnostics",
+        "Frames in the buffer",
+        "camera",
+        "Advanced Crop Preview",
+        "Stimulus Event Timeline",
+        "Analysis Timeline"
+      ],
+      "passed": true
+    },
+    {
+      "hierarchy_labels_equal": true,
+      "id": "crop-preview.window-hierarchy-labels-bounds",
+      "max_bounds_delta_px": 0.0,
+      "passed": true,
+      "tolerance_px": 0.5
+    },
+    {
+      "id": "crop-preview.camera-surface-anchor",
+      "max_anchor_delta_px": 0.0,
+      "passed": true,
+      "semantic_labels": {
+        "linux": "Cam2010093_2026-06-14T21-12-08Z_arena_1/scene view0_A4762B04",
+        "macos": "##camera-presentation"
+      },
+      "tolerance_px": 0.5
+    },
+    {
+      "id": "crop-preview.camera-transport-label-order-anchor",
+      "labels": [
+        "\uf049",
+        "\uf048",
+        "\uf04b",
+        "\uf051",
+        "\uf050"
+      ],
+      "max_anchor_delta_px": 0.0,
+      "passed": true,
+      "tolerance_px": 0.5
+    },
+    {
+      "expected": [
+        56,
+        57,
+        58,
+        59,
+        60,
+        61
+      ],
+      "id": "crop-preview.buffered-frame-identity-order",
+      "linux": [
+        56,
+        57,
+        58,
+        59,
+        60,
+        61
+      ],
+      "macos": [
+        56,
+        57,
+        58,
+        59,
+        60,
+        61
+      ],
+      "passed": true
+    },
+    {
+      "frame": 56,
+      "id": "analysis-eye.linux.capture-contract",
+      "image_size": {
+        "height": 1080,
+        "width": 1920
+      },
+      "logical_size": {
+        "height": 1080,
+        "width": 1920
+      },
+      "passed": true,
+      "stable_frames": 60,
+      "state": "analysis-eye"
+    },
+    {
+      "id": "analysis-eye.linux.state-content-ready",
+      "passed": true
+    },
+    {
+      "frame": 56,
+      "id": "analysis-eye.macos.capture-contract",
+      "image_size": {
+        "height": 1080,
+        "width": 1920
+      },
+      "logical_size": {
+        "height": 1080,
+        "width": 1920
+      },
+      "passed": true,
+      "stable_frames": 60,
+      "state": "analysis-eye"
+    },
+    {
+      "id": "analysis-eye.macos.state-content-ready",
+      "passed": true
+    },
+    {
+      "expected": [
+        "File Browser",
+        "Frame Inspect",
+        "Diagnostics",
+        "Frames in the buffer",
+        "camera",
+        "Stimulus Event Timeline",
+        "Analysis Timeline"
+      ],
+      "id": "analysis-eye.window-presence-order",
+      "linux": [
+        "File Browser",
+        "Frame Inspect",
+        "Diagnostics",
+        "Frames in the buffer",
+        "camera",
+        "Stimulus Event Timeline",
+        "Analysis Timeline"
+      ],
+      "macos": [
+        "File Browser",
+        "Frame Inspect",
+        "Diagnostics",
+        "Frames in the buffer",
+        "camera",
+        "Stimulus Event Timeline",
+        "Analysis Timeline"
+      ],
+      "passed": true
+    },
+    {
+      "hierarchy_labels_equal": true,
+      "id": "analysis-eye.window-hierarchy-labels-bounds",
+      "max_bounds_delta_px": 0.0,
+      "passed": true,
+      "tolerance_px": 0.5
+    },
+    {
+      "id": "analysis-eye.camera-surface-anchor",
+      "max_anchor_delta_px": 0.0,
+      "passed": true,
+      "semantic_labels": {
+        "linux": "Cam2010093_2026-06-14T21-12-08Z_arena_1/scene view0_A4762B04",
+        "macos": "##camera-presentation"
+      },
+      "tolerance_px": 0.5
+    },
+    {
+      "id": "analysis-eye.camera-transport-label-order-anchor",
+      "labels": [
+        "\uf049",
+        "\uf048",
+        "\uf04b",
+        "\uf051",
+        "\uf050"
+      ],
+      "max_anchor_delta_px": 0.0,
+      "passed": true,
+      "tolerance_px": 0.5
+    },
+    {
+      "expected": [
+        56,
+        57,
+        58,
+        59,
+        60,
+        61
+      ],
+      "id": "analysis-eye.buffered-frame-identity-order",
+      "linux": [
+        56,
+        57,
+        58,
+        59,
+        60,
+        61
+      ],
+      "macos": [
+        56,
+        57,
+        58,
+        59,
+        60,
+        61
+      ],
+      "passed": true
+    },
+    {
+      "frame": 1024,
+      "id": "stimulus-debug.linux.capture-contract",
+      "image_size": {
+        "height": 1080,
+        "width": 1920
+      },
+      "logical_size": {
+        "height": 1080,
+        "width": 1920
+      },
+      "passed": true,
+      "stable_frames": 60,
+      "state": "stimulus-debug"
+    },
+    {
+      "id": "stimulus-debug.linux.state-content-ready",
+      "passed": true
+    },
+    {
+      "frame": 1024,
+      "id": "stimulus-debug.macos.capture-contract",
+      "image_size": {
+        "height": 1080,
+        "width": 1920
+      },
+      "logical_size": {
+        "height": 1080,
+        "width": 1920
+      },
+      "passed": true,
+      "stable_frames": 60,
+      "state": "stimulus-debug"
+    },
+    {
+      "id": "stimulus-debug.macos.state-content-ready",
+      "passed": true
+    },
+    {
+      "expected": [
+        "File Browser",
+        "Frame Inspect",
+        "Diagnostics",
+        "Frames in the buffer",
+        "camera",
+        "Stimulus",
+        "Stimulus Frames in Buffer",
+        "Stimulus Event Timeline",
+        "Analysis Timeline"
+      ],
+      "id": "stimulus-debug.window-presence-order",
+      "linux": [
+        "File Browser",
+        "Frame Inspect",
+        "Diagnostics",
+        "Frames in the buffer",
+        "camera",
+        "Stimulus",
+        "Stimulus Frames in Buffer",
+        "Stimulus Event Timeline",
+        "Analysis Timeline"
+      ],
+      "macos": [
+        "File Browser",
+        "Frame Inspect",
+        "Diagnostics",
+        "Frames in the buffer",
+        "camera",
+        "Stimulus",
+        "Stimulus Frames in Buffer",
+        "Stimulus Event Timeline",
+        "Analysis Timeline"
+      ],
+      "passed": true
+    },
+    {
+      "hierarchy_labels_equal": true,
+      "id": "stimulus-debug.window-hierarchy-labels-bounds",
+      "max_bounds_delta_px": 0.0,
+      "passed": true,
+      "tolerance_px": 0.5
+    },
+    {
+      "id": "stimulus-debug.camera-surface-anchor",
+      "max_anchor_delta_px": 0.0,
+      "passed": true,
+      "semantic_labels": {
+        "linux": "Cam2010093_2026-06-14T21-12-08Z_arena_1/scene view0_A4762B04",
+        "macos": "##camera-presentation"
+      },
+      "tolerance_px": 0.5
+    },
+    {
+      "id": "stimulus-debug.camera-transport-label-order-anchor",
+      "labels": [
+        "\uf049",
+        "\uf048",
+        "\uf04b",
+        "\uf051",
+        "\uf050"
+      ],
+      "max_anchor_delta_px": 0.0,
+      "passed": true,
+      "tolerance_px": 0.5
+    },
+    {
+      "expected": [
+        1024,
+        1025,
+        1026,
+        1027,
+        1028
+      ],
+      "id": "stimulus-debug.buffered-frame-identity-order",
+      "linux": [
+        1024,
+        1025,
+        1026,
+        1027,
+        1028
+      ],
+      "macos": [
+        1024,
+        1025,
+        1026,
+        1027,
+        1028
+      ],
+      "passed": true
+    },
+    {
+      "block_channel_count": 162,
+      "block_size": 16,
+      "id": "workspace.camera-clean-raster",
+      "max_channel_delta": 2.109375,
+      "mean_channel_delta": 0.7557055898491074,
+      "p99_5_channel_delta": 2.109375,
+      "passed": true,
+      "tolerance_channel_8bit": 3
+    }
+  ],
+  "contract": "docs/reference/phase5l/acceptance_contract.json",
+  "linux_directory": "docs/reference/phase5l/linux",
+  "macos_directory": "docs/reference/phase5l/macos",
+  "masks": [
+    {
+      "id": "operating-system-chrome",
+      "reason": "Both golden images are app-produced client/framebuffer surfaces and contain no operating-system chrome.",
+      "scope": "none"
+    },
+    {
+      "id": "font-raster",
+      "reason": "Roboto/Fork Awesome rasterization differs between Metal and OpenGL. Text content and anchors are checked from the ImGui semantic snapshot instead.",
+      "scope": "ImGui text glyph pixels outside scientific media"
+    },
+    {
+      "id": "backend-and-deferred-panels",
+      "reason": "Backend diagnostics and write/inference controls are platform adapters or explicitly deferred. Window role, ordering, visibility, and outer bounds remain exact checks.",
+      "scope": "File Browser, Frame Inspect, Diagnostics, buffer list, stimulus timeline, and analysis timeline interiors"
+    },
+    {
+      "id": "camera-plot-decoration",
+      "reason": "Maintained redgui owns ImPlot axes while the Metal adapter records the fitted media rectangle directly.",
+      "scope": "Linux camera plot area outside viewports.camera_media"
+    },
+    {
+      "id": "camera-picture-in-picture",
+      "reason": "ROI/stimulus insets and their text labels use renderer-specific raster paths. Their availability and geometry are separately asserted by state markers.",
+      "scope": "Camera areas outside the declared clean source regions"
+    },
+    {
+      "id": "production-overlay-label-raster",
+      "reason": "At this display scale the scientific subject occupies fewer than 20 pixels and is obscured by renderer-owned labels/insets. Frozen mask IoU, vector coverage, outlier, and channel thresholds are enforced by apple_read_only_overlay_metal_tests at a controlled resolution; Linux enforces the same source geometry contract in overlay_scene_contract_tests.",
+      "scope": "Production camera overlay labels and small on-screen mask/vector raster"
+    }
+  ],
+  "passed": true,
+  "required_threshold_fixtures": [
+    "overlay_scene_contract_tests",
+    "apple_read_only_overlay_metal_tests"
+  ],
+  "schema": "crimson.phase5l.visual-acceptance-report.v1"
+}

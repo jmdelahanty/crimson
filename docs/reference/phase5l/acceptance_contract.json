@@ -1,0 +1,148 @@
+{
+  "schema": "crimson.phase5l.visual-acceptance-contract.v1",
+  "logical_size": {
+    "width": 1920,
+    "height": 1080
+  },
+  "tolerances": {
+    "source_geometry_px": 0.25,
+    "display_anchor_px": 0.5,
+    "non_antialiased_channel_8bit": 3,
+    "binary_mask_iou": 0.995,
+    "vector_coverage": 0.995,
+    "vector_coverage_radius_px": 1,
+    "vector_max_outlier_px": 2
+  },
+  "states": [
+    {
+      "id": "workspace",
+      "stem": "workspace_exact_f000056_1920x1080",
+      "frame": 56,
+      "windows": [
+        "File Browser",
+        "Frame Inspect",
+        "Diagnostics",
+        "Frames in the buffer",
+        "camera",
+        "Stimulus Event Timeline",
+        "Analysis Timeline"
+      ]
+    },
+    {
+      "id": "overlays",
+      "stem": "overlays_exact_f000056_1920x1080",
+      "frame": 56,
+      "windows": [
+        "File Browser",
+        "Frame Inspect",
+        "Diagnostics",
+        "Frames in the buffer",
+        "camera",
+        "Stimulus Event Timeline",
+        "Analysis Timeline"
+      ]
+    },
+    {
+      "id": "crop-preview",
+      "stem": "crop_preview_exact_f000056_1920x1080",
+      "frame": 56,
+      "windows": [
+        "File Browser",
+        "Frame Inspect",
+        "Diagnostics",
+        "Frames in the buffer",
+        "camera",
+        "Advanced Crop Preview",
+        "Stimulus Event Timeline",
+        "Analysis Timeline"
+      ]
+    },
+    {
+      "id": "analysis-eye",
+      "stem": "analysis_eye_exact_f000056_1920x1080",
+      "frame": 56,
+      "windows": [
+        "File Browser",
+        "Frame Inspect",
+        "Diagnostics",
+        "Frames in the buffer",
+        "camera",
+        "Stimulus Event Timeline",
+        "Analysis Timeline"
+      ]
+    },
+    {
+      "id": "stimulus-debug",
+      "stem": "stimulus_debug_exact_f001024_1920x1080",
+      "frame": 1024,
+      "windows": [
+        "File Browser",
+        "Frame Inspect",
+        "Diagnostics",
+        "Frames in the buffer",
+        "camera",
+        "Stimulus",
+        "Stimulus Frames in Buffer",
+        "Stimulus Event Timeline",
+        "Analysis Timeline"
+      ]
+    }
+  ],
+  "shared_controls": {
+    "camera_surface": {
+      "linux_label_prefix": "Cam2010093_2026-06-14T21-12-08Z_arena_1/scene view0_",
+      "macos_label": "##camera-presentation"
+    },
+    "camera_transport_labels": [
+      "\uf049",
+      "\uf048",
+      "\uf04b",
+      "\uf051",
+      "\uf050"
+    ],
+    "buffered_frame_count": 6
+  },
+  "image_checks": {
+    "canonical_size": 512,
+    "camera_block_size": 16,
+    "camera_clean_source_regions": [
+      [0.34, 0.08, 0.28, 0.18]
+    ]
+  },
+  "masks": [
+    {
+      "id": "operating-system-chrome",
+      "scope": "none",
+      "reason": "Both golden images are app-produced client/framebuffer surfaces and contain no operating-system chrome."
+    },
+    {
+      "id": "font-raster",
+      "scope": "ImGui text glyph pixels outside scientific media",
+      "reason": "Roboto/Fork Awesome rasterization differs between Metal and OpenGL. Text content and anchors are checked from the ImGui semantic snapshot instead."
+    },
+    {
+      "id": "backend-and-deferred-panels",
+      "scope": "File Browser, Frame Inspect, Diagnostics, buffer list, stimulus timeline, and analysis timeline interiors",
+      "reason": "Backend diagnostics and write/inference controls are platform adapters or explicitly deferred. Window role, ordering, visibility, and outer bounds remain exact checks."
+    },
+    {
+      "id": "camera-plot-decoration",
+      "scope": "Linux camera plot area outside viewports.camera_media",
+      "reason": "Maintained redgui owns ImPlot axes while the Metal adapter records the fitted media rectangle directly."
+    },
+    {
+      "id": "camera-picture-in-picture",
+      "scope": "Camera areas outside the declared clean source regions",
+      "reason": "ROI/stimulus insets and their text labels use renderer-specific raster paths. Their availability and geometry are separately asserted by state markers."
+    },
+    {
+      "id": "production-overlay-label-raster",
+      "scope": "Production camera overlay labels and small on-screen mask/vector raster",
+      "reason": "At this display scale the scientific subject occupies fewer than 20 pixels and is obscured by renderer-owned labels/insets. Frozen mask IoU, vector coverage, outlier, and channel thresholds are enforced by apple_read_only_overlay_metal_tests at a controlled resolution; Linux enforces the same source geometry contract in overlay_scene_contract_tests."
+    }
+  ],
+  "required_threshold_fixtures": [
+    "overlay_scene_contract_tests",
+    "apple_read_only_overlay_metal_tests"
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "binary": "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/canonical_detection_storage_benchmark",
+  "cache_bytes": [
+    0,
+    134217728
+  ],
+  "captured_at": "2026-07-25T02:43:18.041171+00:00",
+  "crimson_commit": "34ff3c38229450b4e6bbe9b16fed99e9ca966197",
+  "fixture_root": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/workflows/sleepyfish_det_storage_access_aware_full_20260724_03/candidates/sleepyfish_det_storage_access_aware_full_20260724_03/frames_full",
+  "machine": "arm64",
+  "macos": "ProductName:\t\tmacOS\nProductVersion:\t\t26.3.1\nBuildVersion:\t\t25D2128",
+  "mode": "full",
+  "mount": [
+    "//delahantyj@prfs.hhmi.org/johnsonlab on /Volumes/johnsonlab (smbfs, nodev, nosuid, mounted by jmdelahanty)"
+  ],
+  "network_label": "mounted_smb_os_cache_uncontrolled",
+  "platform": "macOS-26.3.1-arm64-arm-64bit",
+  "python": "3.10.14",
+  "tensorstore_commit": "cc9fb6641b2b661d3569e1b16004af1c024251ad"
+}

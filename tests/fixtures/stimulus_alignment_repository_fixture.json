@@ -1,0 +1,33 @@
+{
+  "run_name": "fixture_alignment_run",
+  "source_stimulus_video_path": "/groups/johnson/johnsonlab/fixture_recording/raw/stimulus.mp4",
+  "camera_frame_offset": 17,
+  "arrays": {
+    "camera_to_metadata_index": [-1, 0, 1, 2, 3, -1, 4],
+    "camera_to_metadata_index_corrected": [-1, 0, 1, 2, 3, 4, -1],
+    "camera_to_stimulus_frame_corrected": [-1, 100, 101, -1, 103, 104, -1],
+    "stimulus_frame_num": [90, 92, 94, 96, 98],
+    "stimulus_frame_num_corrected": [100, 101, 102, 103, 104],
+    "camera_interpolation_mask": [true, true, true, false, true, true, true],
+    "camera_stimulus_frame_interpolated": [0, 0, 1, 0, 0, 0, 0]
+  },
+  "corrected_expectations": [
+    {"camera": 0, "status": "missing"},
+    {"camera": 1, "status": "mapped", "source": "corrected_direct", "stimulus": 100, "interpolated": false},
+    {"camera": 2, "status": "mapped", "source": "corrected_direct", "stimulus": 101, "interpolated": true},
+    {"camera": 3, "status": "mapped", "source": "corrected_metadata", "metadata": 2, "stimulus": 102, "interpolated": true},
+    {"camera": 6, "status": "mapped", "source": "legacy_metadata", "metadata": 4, "stimulus": 98, "interpolated": false},
+    {"camera": 7, "status": "out_of_range"}
+  ],
+  "legacy_expectations": [
+    {"camera": 1, "status": "mapped", "source": "legacy_metadata", "metadata": 0, "stimulus": 90, "interpolated": false},
+    {"camera": 3, "status": "mapped", "source": "legacy_metadata", "metadata": 2, "stimulus": 94, "interpolated": true},
+    {"camera": 5, "status": "missing"}
+  ],
+  "first_corrected_camera": 1,
+  "first_corrected_stimulus": 100,
+  "first_legacy_camera": 1,
+  "first_legacy_stimulus": 90,
+  "reverse_corrected_stimulus": 102,
+  "reverse_corrected_camera": 3
+}

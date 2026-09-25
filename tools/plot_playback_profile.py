@@ -46,6 +46,7 @@ NUMERIC_COLUMNS = {
     "camera_decode_gap_frames": int,
     "camera_decode_demux_ms": float,
     "camera_decode_submit_ms": float,
+    "camera_decode_decode_ms": float,
     "camera_decode_convert_ms": float,
     "camera_decode_wait_ms": float,
     "camera_decode_write_ms": float,
@@ -156,6 +157,8 @@ def load_rows(csv_path: Path) -> dict[str, list[Any]]:
                     columns[name].append(parse_numeric(raw, NUMERIC_COLUMNS[name]))
                 else:
                     columns[name].append(raw)
+    if "camera_decode_submit_ms" not in columns and "camera_decode_decode_ms" in columns:
+        columns["camera_decode_submit_ms"] = columns["camera_decode_decode_ms"]
     return columns
 
 

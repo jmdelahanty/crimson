@@ -1,0 +1,51 @@
+{
+  "schema_id": "crimson.keypoint_v2.long_duration_experiment",
+  "schema_version": 1,
+  "description": "Five-process mounted macOS acceptance gate for Palette's selector-ineligible Batman raw, quality, refined, and body-frame keypoint runs.",
+  "workload": "keypoint_v2_long_duration_workload_v1.json",
+  "repetition_count": 5,
+  "timeout_seconds": 900.0,
+  "evidence_files": [
+    {
+      "path": "/Volumes/johnsonlab/jeremy/logs/whole_recording_keypoints/batman_kpt5_v2_canary_20260805_v005/terminal/2026-07-21T19-38-32Z_arena_2_Batman.zarr/terminal_receipt.json",
+      "sha256": "57727057bd1a946c5492b506ace03e8fa9a77794cb6b561df817ceff75a58035"
+    },
+    {
+      "path": "/Volumes/johnsonlab/jeremy/logs/whole_recording_keypoints/batman_kpt5_v2_canary_20260805_v005/finalization/2026-07-21T19-38-32Z_arena_2_Batman.json",
+      "sha256": "bd29952654e951476b3bb1d37ddd54c0b5df9e7bc371657913f9d9f076122f7a"
+    },
+    {
+      "path": "/Volumes/johnsonlab/jeremy/logs/whole_recording_keypoints/batman_kpt5_v2_canary_20260805_v005/registry/registry_finalizer.153273678.json",
+      "sha256": "26b3d88cca6eb2f4b2586d4f4f924554a65cd5bceecee75a67dbcabe30c19106"
+    }
+  ],
+  "candidates": [
+    {
+      "id": "batman_refined_keypoints_v2",
+      "mode": "refined",
+      "description": "Batman refined keypoint observations v2 with exact raw, lazy quality, and refined-derived body-frame bindings.",
+      "deep_validate_identity": true,
+      "raw": {
+        "store": "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr",
+        "run": "keypoints_batman_kpt5_v2_canary_20260805_v005",
+        "manifest_digest": "dd5aa05452bcb05f820a44d39795689e0981b6bf33cbb3235af584a9164d956e"
+      },
+      "quality": {
+        "store": "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr",
+        "run": "keypoint_quality_batman_kpt5_v2_canary_20260805_v005",
+        "manifest_digest": "daee5983024d78c96bc0b8d31ef3713a97a733dc65f1260b5b69bcf61f1eaca4"
+      },
+      "refined": {
+        "store": "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr",
+        "run": "refined_keypoints_batman_kpt5_v2_canary_20260805_v005",
+        "manifest_digest": "acd2d14f7bbed7a468ea0fd6262633a38f16dbf3d6ea48f915c81834c476412f"
+      },
+      "body_frame": {
+        "store": "/Volumes/johnsonlab/jeremy/recordings/2026-07-21T19-38-32Z_arena_2_Batman/zarr/2026-07-21T19-38-32Z_arena_2_Batman_analysis.zarr",
+        "run": "body_frame_batman_kpt5_v2_canary_20260805_v005",
+        "manifest_digest": "0e0c44a708afb0619dbc934029ac800ad3ed97f8acea429dd81057b66579be93"
+      }
+    }
+  ],
+  "comparisons": []
+}

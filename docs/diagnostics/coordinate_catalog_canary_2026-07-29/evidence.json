@@ -1,0 +1,57 @@
+{
+  "canonical": {
+    "coordinate_catalog_validated": true,
+    "elapsed_ms": 383.392,
+    "exact_handle_opens": 4,
+    "frames": 23287,
+    "manifest_digest": "960dc83e7fb47d27ed3577b3f9ea2bbe7d490b18b4c979b11f922f0523845e2d",
+    "offset_read_calls": 1,
+    "rows": 22938,
+    "run": "detect_coordinate_catalog_crimson_20260728_v3",
+    "sample_row": 0,
+    "sample_transform_max_error": 0.00010925531387329102,
+    "sample_transform_tolerance": 0.001
+  },
+  "classification": "headless_mounted_archive_integration",
+  "crimson_base_commit": "ce478c7d13d2f870e6c711308090e28364872602",
+  "crimson_worktree_dirty": false,
+  "crop": {
+    "coordinate_catalog_validated": true,
+    "elapsed_ms": 731.412333,
+    "frames": 23287,
+    "manifest_digest": "a4f42a823b1ca81cc69936fe0a374a59b75f42a8781a159a6a56f02e25a463f6",
+    "output_size": [
+      512,
+      512
+    ],
+    "rows": 22926,
+    "run": "crop_geometry_coordinate_catalog_crimson_20260728_v2",
+    "sample_instance_key": 5247891125059518930,
+    "sample_row": 0,
+    "sample_transform_max_error": 0.0,
+    "sample_transform_tolerance": 0.001
+  },
+  "cross_stage_lineage_validated": true,
+  "expected_handoff_file_sha256": "21ccf119dfe7910e6c2cce7b027a9318e7b3c8cec4702363fbc3d4460775c4d3",
+  "handoff_file_sha256": "21ccf119dfe7910e6c2cce7b027a9318e7b3c8cec4702363fbc3d4460775c4d3",
+  "handoff_manifest": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/coordinate_catalog/integration/20260128_coordinate_catalog_crimson_20260728_v1/handoff_manifest.json",
+  "handoff_payload_digest": "c4c6b186386ea8711b7d5517ae369d49d187b26228e0d6c2c6cc6228bab98692",
+  "immutable_crimson_revision_bound": true,
+  "palette_artifact_commit": "7a710276beea3037a457f4bfbb5be9f0525de0dc",
+  "palette_checkpoint_commit": "1dd7a8f9589dcbf8831b385a5ce36c41b428b85e",
+  "pass": true,
+  "production_state_changed": false,
+  "refined": {
+    "coordinate_catalog_validated": true,
+    "elapsed_ms": 365.787625,
+    "exact_handle_opens": 11,
+    "frames": 23287,
+    "manifest_digest": "df1e05e9a435fcbd3ff5403c666f6d622276e66dd32222300e1b358b47e86881",
+    "offset_read_calls": 1,
+    "rows": 22926,
+    "run": "refined_detect_coordinate_catalog_crimson_20260728_v2",
+    "source_audit_handle_opens": 0
+  },
+  "schema_id": "crimson.coordinate_catalog_canary_gate",
+  "schema_version": 1
+}

@@ -1,0 +1,141 @@
+Bootstrap: docker
+From: nvcr.io/nvidia/tensorrt:24.05-py3
+
+%labels
+    org.opencontainers.image.title Crimson Linux Ubuntu 22 builder
+    org.opencontainers.image.version ubuntu22-cuda12.4-tensorrt10-opencv4.10
+    crimson.ubuntu 22.04
+    crimson.cuda 12.4
+    crimson.tensorrt 10.0.1.6
+    crimson.opencv 4.10.0
+    crimson.cmake 3.30.5
+
+%environment
+    export PATH=/opt/crimson/cmake-3.30.5-linux-x86_64/bin:/usr/local/cuda/bin:/usr/local/bin:/usr/bin:/bin
+    export CRIMSON_CUDA_TOOLKIT_ROOT=/usr/local/cuda
+    export CRIMSON_OPENCV_DIR=/opt/crimson/opencv-4.10.0-jammy/lib/cmake/opencv4
+    export CRIMSON_FFMPEG_ROOT=/opt/crimson/ffmpeg-jammy
+    export CRIMSON_TENSORRT_ROOT=/opt/crimson/tensorrt-10.0.1.6
+
+%post
+    set -eux
+    export DEBIAN_FRONTEND=noninteractive
+
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        curl \
+        git \
+        libavcodec-dev \
+        libavformat-dev \
+        libavutil-dev \
+        libblas-dev \
+        libceres-dev \
+        libcurl4-openssl-dev \
+        libeigen3-dev \
+        libgflags-dev \
+        libglew-dev \
+        libglfw3-dev \
+        libglm-dev \
+        libgoogle-glog-dev \
+        libhdf5-dev \
+        libjpeg-dev \
+        liblapack-dev \
+        libopenexr-dev \
+        libpng-dev \
+        libssl-dev \
+        libsuitesparse-dev \
+        libswresample-dev \
+        libswscale-dev \
+        libtiff-dev \
+        libwebp-dev \
+        libx11-dev \
+        libxcursor-dev \
+        libxi-dev \
+        libxinerama-dev \
+        libxrandr-dev \
+        libzstd-dev \
+        nasm \
+        ninja-build \
+        patchelf \
+        pkg-config \
+        zlib1g-dev
+
+    cmake_archive=/tmp/cmake-3.30.5-linux-x86_64.tar.gz
+    curl -fsSL \
+        https://github.com/Kitware/CMake/releases/download/v3.30.5/cmake-3.30.5-linux-x86_64.tar.gz \
+        -o "$cmake_archive"
+    printf '%s  %s\n' \
+        f747d9b23e1a252a8beafb4ed2bc2ddf78cff7f04a8e4de19f4ff88e9b51dc9d \
+        "$cmake_archive" | sha256sum -c -
+    mkdir -p /opt/crimson/cmake-3.30.5-linux-x86_64
+    tar -xzf "$cmake_archive" \
+        --strip-components=1 \
+        -C /opt/crimson/cmake-3.30.5-linux-x86_64
+
+    git clone https://github.com/opencv/opencv.git /tmp/opencv
+    git -C /tmp/opencv checkout 71d3237a093b60a27601c20e9ee6c3e52154e8b1
+    git clone https://github.com/opencv/opencv_contrib.git /tmp/opencv_contrib
+    git -C /tmp/opencv_contrib checkout 1ed3dd2c53888e3289afdb22ec4e9ebbff3dba87
+
+    /usr/local/bin/cmake \
+        -S /tmp/opencv \
+        -B /tmp/opencv-build \
+        -G Ninja \
+        -D CMAKE_BUILD_TYPE=Release \
+        -D CMAKE_INSTALL_PREFIX=/opt/crimson/opencv-4.10.0-jammy \
+        -D OPENCV_EXTRA_MODULES_PATH=/tmp/opencv_contrib/modules \
+        -D BUILD_LIST=core,imgproc,imgcodecs,videoio,calib3d,features2d,dnn,sfm,cudev,cudaarithm,cudawarping \
+        -D BUILD_EXAMPLES=OFF \
+        -D BUILD_JAVA=OFF \
+        -D BUILD_PERF_TESTS=OFF \
+        -D BUILD_TESTS=OFF \
+        -D BUILD_opencv_python2=OFF \
+        -D BUILD_opencv_python3=OFF \
+        -D BUILD_SHARED_LIBS=ON \
+        -D CUDA_ARCH_BIN=8.0,8.6 \
+        -D CUDA_ARCH_PTX= \
+        -D CUDA_FAST_MATH=OFF \
+        -D ENABLE_FAST_MATH=OFF \
+        -D OPENCV_DNN_CUDA=ON \
+        -D WITH_CUBLAS=ON \
+        -D WITH_CUDA=ON \
+        -D WITH_CUDNN=ON \
+        -D WITH_FFMPEG=ON \
+        -D WITH_GTK=OFF \
+        -D WITH_NVCUVID=OFF \
+        -D WITH_NVCUVENC=OFF \
+        -D WITH_TBB=OFF
+    /usr/local/bin/cmake --build /tmp/opencv-build --parallel
+    /usr/local/bin/cmake --install /tmp/opencv-build
+
+    mkdir -p \
+        /opt/crimson/ffmpeg-jammy \
+        /opt/crimson/tensorrt-10.0.1.6
+    ln -s /usr/include/x86_64-linux-gnu /opt/crimson/ffmpeg-jammy/include
+    ln -s /usr/lib/x86_64-linux-gnu /opt/crimson/ffmpeg-jammy/lib
+    ln -s /usr/include/x86_64-linux-gnu /opt/crimson/tensorrt-10.0.1.6/include
+    ln -s /usr/lib/x86_64-linux-gnu /opt/crimson/tensorrt-10.0.1.6/lib
+
+    rm -rf \
+        /tmp/cmake-3.30.5-linux-x86_64.tar.gz \
+        /tmp/opencv \
+        /tmp/opencv-build \
+        /tmp/opencv_contrib \
+        /var/lib/apt/lists/*
+
+%test
+    set -eu
+    test "$(getconf GNU_LIBC_VERSION)" = "glibc 2.35"
+    test -x /opt/crimson/cmake-3.30.5-linux-x86_64/bin/cmake
+    test -r /opt/crimson/opencv-4.10.0-jammy/lib/cmake/opencv4/OpenCVConfig.cmake
+    test -r /opt/crimson/tensorrt-10.0.1.6/lib/libnvinfer.so
+    for crimson_trt_header in NvInfer.h NvInferVersion.h; do
+        crimson_trt_header_path="/opt/crimson/tensorrt-10.0.1.6/include/$crimson_trt_header"
+        if [ ! -f "$crimson_trt_header_path" ] || [ ! -r "$crimson_trt_header_path" ]; then
+            echo "TensorRT development header missing or unreadable: $crimson_trt_header_path" >&2
+            exit 1
+        fi
+    done
+    test -r /opt/crimson/ffmpeg-jammy/lib/libavcodec.so

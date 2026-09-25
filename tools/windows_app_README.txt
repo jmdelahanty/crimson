@@ -13,15 +13,27 @@ Or from PowerShell:
 - run `install_crimson.ps1`
 - add `-CreateDesktopShortcut` if you want the installer to create a Desktop shortcut
 
+Quick runtime check:
+- run `check_crimson_runtime.cmd`
+- or run `check_crimson_runtime.ps1`
+
 Default install location:
 - `%LOCALAPPDATA%\Crimson`
 
-What gets installed
--------------------
+Supported stack
+---------------
 
-- `bin\redgui.exe`
-- required runtime `.dll` files in `bin\`
-- app resources under `share\crimson\...`
+This app drop was built and packaged against one supported Windows dependency
+stack. It is not meant to be rebuilt or reconfigured on each user machine.
+
+Run-only users provide:
+- a supported Windows x64 machine
+- a compatible NVIDIA GPU and driver
+
+The app drop provides:
+- `redgui.exe`
+- the runtime DLLs matched to the build stack
+- fonts, config, and helper scripts
 
 How to launch after install
 ---------------------------
@@ -47,12 +59,32 @@ Desktop shortcut
 - `install_crimson.cmd` does not create a Desktop shortcut by default
 - use `install_crimson.ps1 -CreateDesktopShortcut` if you want one created automatically
 
+CUDA GPU preference
+-------------------
+
+Use `set_crimson_cuda_device.cmd` if you need to write or clear Crimson's saved
+CUDA GPU preference. This writes:
+
+- `%LOCALAPPDATA%\Crimson\config\cuda_device.json`
+
+Examples:
+
+- `powershell -ExecutionPolicy Bypass -File ".\set_crimson_cuda_device.ps1"`
+- `powershell -ExecutionPolicy Bypass -File ".\set_crimson_cuda_device.ps1" -DeviceIndex 1`
+- `powershell -ExecutionPolicy Bypass -File ".\set_crimson_cuda_device.ps1" -ClearSavedChoice`
+
 Notes
 -----
 
 - Keep the `.dll` files next to `redgui.exe` in `bin\`.
 - Do not copy only `redgui.exe`.
 - Do not move files out of this folder by hand.
+- Run-only users should not need to install the CUDA Toolkit. They need a
+  compatible NVIDIA driver; this app drop should contain the runtime DLLs
+  Crimson needs.
+- If a machine is also being used to build Crimson from source, install the
+  CUDA Toolkit separately and avoid replacing the display driver unless that is
+  an intentional machine-maintenance step.
 - If Windows reports a missing `.dll`, report the exact filename.
 - If Crimson hard-crashes, check `%LOCALAPPDATA%\Crimson\CrashDumps` for a
   `.dmp` file and matching `.txt` sidecar.

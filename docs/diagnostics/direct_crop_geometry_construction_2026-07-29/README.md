@@ -1,0 +1,110 @@
+# Direct Crop-Geometry Construction Checkpoint
+
+Date: 2026-07-29
+
+Status: direct compact construction accepted. Crop payloads remain resident;
+this is an application initialization change, not a persisted-schema,
+storage-profile, or paging-policy change.
+
+## Scope
+
+The compact repository checkpoint reduced retained crop geometry from 199.9
+MiB to 62.6 MiB, but both TensorStore openers still created temporary legacy
+row structures before constructing the compact columns. The compatibility
+reader also used `vector<vector<double>>`, causing one heap allocation per
+crop row.
+
+This checkpoint changes both openers:
+
+- strict coordinate-aware crop-v2 retains the validated persisted
+  `frame_row_offsets` vector directly;
+- strict arrays are read with their exact declared dtypes and converted into
+  final columns sequentially, releasing temporary source arrays between
+  fields;
+- legacy numeric matrices decode into flat fixed-width arrays rather than
+  per-row vectors;
+- legacy frame offsets are derived only when the persisted contract does not
+  provide them; and
+- the row adapter remains available for synthetic and compatibility callers,
+  but archive openers report `direct_compact_columns=true`.
+
+Scientific fields, coordinate conversions, missing-row behavior, stable
+first-row inset presentation, and the repository API remain unchanged.
+
+Implementation commit:
+
+`bd62080d364e7d2792cc7ed84b97cb570db96125`
+
+Both accepted mounted trials reported `crimson_worktree_dirty=false` and the
+full commit above.
+
+## Result
+
+The comparison uses the same 1,188,000-frame Sleepyfish hybrid archive,
+production 64 MiB TensorStore cache, resident detection strategy, and full
+workload. The adapter trials are the two prior compact-repository receipts.
+
+| Metric | Adapter rep 0 | Adapter rep 1 | Direct rep 3 | Direct rep 4 |
+| --- | ---: | ---: | ---: | ---: |
+| Crop product initialization | 7.62 s | 8.23 s | 1.26 s | 1.37 s |
+| RSS when crop became ready | 1,516.6 MiB | 1,534.7 MiB | 777.3 MiB | 739.1 MiB |
+| Required-ready RSS | 1,572.7 MiB | 1,585.0 MiB | 1,434.1 MiB | 1,364.9 MiB |
+| Retained crop lower bound | 62.6 MiB | 62.6 MiB | 62.6 MiB | 62.6 MiB |
+| Complete loading | 64.50 s | 60.48 s | 44.23 s | 43.13 s |
+| Total workload | 97.74 s | 92.87 s | 67.45 s | 66.71 s |
+| Lifetime peak RSS | 2,353.4 MiB | 1,854.9 MiB | 2,206.8 MiB | 2,115.0 MiB |
+
+Using the two-repetition medians, crop initialization was 6.02x faster and
+RSS at crop readiness was 767.5 MiB lower (50.3%). Required-ready RSS was
+179.4 MiB lower. The unchanged 62.6 MiB retained lower bound confirms that
+this checkpoint removed temporary construction structures rather than
+changing the final repository payload.
+
+These trials were sequential on a mounted network filesystem without enforced
+filesystem or server cache eviction. The observed 18.8-second loading and
+28.2-second total-workload median improvements are therefore supportive, not
+portable latency guarantees. Crop initialization and crop-ready RSS are the
+closest scoped measurements, but their exact values also include storage-cache
+state.
+
+Lifetime peaks again occurred later during subject-mask, subject-shape, and
+eye-geometry presentation settlement. Their ranges overlap the adapter trials
+and do not measure crop construction. The raw timelines retain that variance.
+
+One preliminary direct trial was intentionally excluded because its CMake
+revision string still named the previous commit. CMake was regenerated before
+repetitions 3 and 4; both accepted receipts are bound to `bd62080`.
+
+## Validation
+
+- focused direct-column tests cover persisted offsets, empty frames,
+  multi-row frames, optional fields, and fail-closed malformed offsets;
+- strict crop-v2 and legacy fixture openers both prove the direct-column path;
+- the complete macOS suite passed 63/63;
+- an isolated Linux build passed the focused repository test; and
+- the complete CUDA/NVIDIA `redgui` target built successfully.
+
+## Decision
+
+Keep direct construction as the shared archive-opening path. Do not introduce
+synchronous storage access into current-frame resolution. The next memory work
+should inspect subject-shape and eye-geometry placement construction, which
+remain the largest reported application-owned geometry repositories. Crop
+payload paging remains a later byte-budget decision for larger multi-instance
+fixtures, not a requirement for the current 62.6 MiB payload.
+
+## Evidence
+
+- `direct_repetition_3.json`
+  - SHA-256:
+    `78f64c12478862cac8dca67a388ef77beea552a2acf39abc7c98263f86b6e5ea`
+- `direct_repetition_4.json`
+  - SHA-256:
+    `19a32452867bf6be7cc301b0aa23cf76a3266d8343c02b6de5962e00fbaa7415`
+- `comparison.png`
+  - SHA-256:
+    `1dadc39b1270b1b8a9dd217f790dcc8a0acce1b42d37c1b5b9195fbd4319e181`
+
+The adapter receipts are preserved in
+`docs/diagnostics/compact_crop_geometry_memory_2026-07-29/`. The plot is
+generated by `tools/plot_direct_crop_geometry_construction.py`.

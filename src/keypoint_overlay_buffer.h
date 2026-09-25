@@ -1,0 +1,58 @@
+#pragma once
+
+#include "data_access_scheduler.h"
+#include "zarr/keypoint_overlay_repository.h"
+
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <string>
+
+struct KeypointOverlayBufferMetrics {
+  uint64_t requests = 0;
+  uint64_t cache_hits = 0;
+  uint64_t resolved_frames = 0;
+  uint64_t missing_frames = 0;
+  uint64_t failed_frames = 0;
+  uint64_t discarded_results = 0;
+  size_t peak_cached_frames = 0;
+  size_t peak_pending_frames = 0;
+  double maximum_resolve_ms = 0.0;
+  std::string last_error;
+};
+
+class KeypointOverlayBuffer {
+ public:
+  explicit KeypointOverlayBuffer(
+      std::shared_ptr<crimson::data::DataAccessScheduler> scheduler = nullptr,
+      std::string archive_identity = {});
+  ~KeypointOverlayBuffer();
+
+  KeypointOverlayBuffer(const KeypointOverlayBuffer&) = delete;
+  KeypointOverlayBuffer& operator=(const KeypointOverlayBuffer&) = delete;
+
+  bool open(
+      std::unique_ptr<crimson::zarr::KeypointOverlayRepository> repository,
+      size_t lookahead_frames = 12, size_t cache_capacity = 24,
+      std::string* error = nullptr);
+  void close();
+  bool isOpen() const;
+
+  bool requestFrame(int64_t camera_frame, int full_frame_width,
+                    int full_frame_height, bool discontinuity = false,
+                    std::string* error = nullptr);
+  bool waitForFrame(int64_t camera_frame,
+                    std::chrono::milliseconds timeout) const;
+  std::shared_ptr<const crimson::zarr::KeypointOverlayResolution> frame(
+      int64_t camera_frame) const;
+
+  crimson::zarr::KeypointOverlayDescriptor descriptor() const;
+  KeypointOverlayBufferMetrics metrics() const;
+  std::unique_ptr<crimson::timeline::KeypointQualityTimelineRepository>
+  createQualityTimelineRepository(std::string* error = nullptr);
+
+ private:
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
+};

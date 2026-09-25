@@ -17,10 +17,27 @@
       }
     },
     {
+      "name": "backend-nvidia",
+      "hidden": true,
+      "cacheVariables": {
+        "CRIMSON_BUILD_NVIDIA_APP": "ON",
+        "CRIMSON_BUILD_MACOS_APP": "OFF"
+      }
+    },
+    {
+      "name": "backend-macos",
+      "hidden": true,
+      "cacheVariables": {
+        "CRIMSON_BUILD_NVIDIA_APP": "OFF",
+        "CRIMSON_BUILD_MACOS_APP": "ON"
+      }
+    },
+    {
       "name": "dep-roots-from-env",
       "hidden": true,
         "cacheVariables": {
           "CUDA_TOOLKIT_ROOT_DIR": "$env{CRIMSON_CUDA_TOOLKIT_ROOT}",
+          "CUDAToolkit_ROOT": "$env{CRIMSON_CUDA_TOOLKIT_ROOT}",
           "OpenCV_DIR": "$env{CRIMSON_OPENCV_DIR}",
           "FFMPEG_ROOT": "$env{CRIMSON_FFMPEG_ROOT}",
           "TENSORRT_ROOT": "$env{CRIMSON_TENSORRT_ROOT}",
@@ -49,7 +66,8 @@
       "hidden": true,
       "inherits": [
         "base",
-        "dep-roots-from-env"
+        "dep-roots-from-env",
+        "backend-nvidia"
       ],
       "generator": "Ninja"
     },
@@ -82,7 +100,8 @@
       "hidden": true,
       "inherits": [
         "base",
-        "dep-roots-from-env"
+        "dep-roots-from-env",
+        "backend-nvidia"
       ],
       "generator": "Ninja Multi-Config"
     },
@@ -104,6 +123,20 @@
         "stack-trt10-cuda12.4-opencv4.10",
         "feature-no-sfm"
       ]
+    },
+    {
+      "name": "macos-arm64-release",
+      "displayName": "macOS Apple Silicon Release",
+      "description": "Native arm64 macOS Metal application with Phase 4 camera-aligned stimulus and crop playback and no CUDA, NVIDIA, OpenGL, or TensorRT dependencies.",
+      "inherits": [
+        "base",
+        "backend-macos"
+      ],
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_OSX_ARCHITECTURES": "arm64"
+      }
     }
   ],
   "buildPresets": [
@@ -134,6 +167,85 @@
       "name": "build-windows-trt10-cuda12.4-no-sfm-debug",
       "configurePreset": "windows-trt10-cuda12.4-no-sfm",
       "configuration": "Debug"
+    },
+    {
+      "name": "build-macos-arm64-release",
+      "configurePreset": "macos-arm64-release",
+      "targets": [
+        "crimson_macos_shell",
+        "app_update_status_tests",
+        "loading_work_runner_tests",
+        "session_loading_modal_layout_tests",
+        "apple_tensorstore_zarr_tests",
+        "analysis_crop_geometry_repository_tests",
+        "keypoint_overlay_repository_tests",
+        "keypoint_overlay_repository_probe",
+        "subject_mask_overlay_repository_tests",
+        "subject_mask_overlay_repository_probe",
+        "subject_shape_overlay_repository_tests",
+        "subject_shape_overlay_repository_probe",
+        "eye_geometry_overlay_repository_tests",
+        "eye_geometry_overlay_repository_probe",
+        "eye_angle_timeline_tests",
+        "analysis_series_timeline_tests",
+        "analysis_series_timeline_repository_tests",
+        "analysis_series_timeline_repository_probe",
+        "eye_angle_timeline_repository_tests",
+        "eye_angle_timeline_repository_probe",
+        "stimulus_context_timeline_tests",
+        "stimulus_context_timeline_repository_tests",
+        "stimulus_context_timeline_repository_probe",
+        "swim_bout_timeline_tests",
+        "swim_bout_timeline_repository_tests",
+        "swim_bout_timeline_repository_probe",
+        "acquisition_crop_repository_tests",
+        "affiliated_video_repository_tests",
+        "affiliated_video_repository_probe",
+        "acquisition_crop_repository_probe",
+        "crop_presentation_coordinator_tests",
+        "crop_source_contract_tests",
+        "stimulus_repository_tests",
+        "stimulus_repository_probe",
+        "stimulus_playback_coordinator_tests",
+        "stimulus_presentation_coordinator_tests",
+        "apple_acquisition_crop_playback_tests",
+        "apple_acquisition_crop_playback_probe",
+        "apple_crop_presentation_metal_tests",
+        "apple_read_only_overlay_metal_tests",
+        "apple_multistream_discontinuity_tests",
+        "apple_stimulus_playback_tests",
+        "apple_stimulus_composite_metal_tests",
+        "apple_stimulus_playback_probe",
+        "apple_video_metal_tests",
+        "apple_video_provider_tests",
+        "frame_slot_tests",
+        "overlay_scene_contract_tests",
+        "read_only_overlay_scene_tests",
+        "read_only_overlay_controls_tests"
+      ]
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "test-macos-arm64-headless",
+      "displayName": "macOS Apple Silicon Headless Metal Tests",
+      "configurePreset": "macos-arm64-release",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "headless|portable"
+        }
+      }
+    },
+    {
+      "name": "test-macos-arm64",
+      "displayName": "macOS Apple Silicon All Tests",
+      "configurePreset": "macos-arm64-release",
+      "output": {
+        "outputOnFailure": true
+      }
     }
   ]
 }

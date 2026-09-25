@@ -1,0 +1,267 @@
+{
+  "analysis": {
+    "eye_representation": "",
+    "ready": false
+  },
+  "archive": "",
+  "buffers": {
+    "camera_capacity": 0,
+    "camera_valid": 0,
+    "stimulus_capacity": 0,
+    "stimulus_valid": 0
+  },
+  "client_size": {
+    "height": 853,
+    "width": 1470
+  },
+  "crop": {
+    "camera_frame": -1,
+    "ready": false,
+    "source": "none"
+  },
+  "format": "crimson_ui_reference_v1",
+  "framebuffer_scale": {
+    "x": 1.0,
+    "y": 1.0
+  },
+  "framebuffer_size": {
+    "height": 1080,
+    "width": 1920
+  },
+  "logical_content_size": {
+    "height": 1080,
+    "width": 1920
+  },
+  "overlays": {
+    "counts": {},
+    "ready": false
+  },
+  "platform": "macos-metal",
+  "presented_frame": -1,
+  "rendered_image": {
+    "height": 1080,
+    "path": "/tmp/crimson-phase5l4-macos-final/initial_empty_1920x1080.ui-reference.json.png",
+    "surface": "metal_drawable_pre_present",
+    "width": 1920
+  },
+  "requested_frame": 0,
+  "semantic_snapshot": {
+    "display_size": {
+      "height": 1080.0,
+      "width": 1920.0
+    },
+    "frame": 60,
+    "framebuffer_scale": {
+      "x": 1.0,
+      "y": 1.0
+    },
+    "items": [
+      {
+        "bounds": {
+          "height": 19.0,
+          "width": 37.0,
+          "x": 14.0,
+          "y": 32.0
+        },
+        "id": 2193332384,
+        "item_flags": 16,
+        "label": "File",
+        "status_flags": 1048832,
+        "submission_order": 11,
+        "visible_label": "File",
+        "window_name": "File Browser",
+        "window_relative_bounds": {
+          "height": 19.0,
+          "width": 37.0,
+          "x": 4.0,
+          "y": 22.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 278.0,
+          "x": 18.0,
+          "y": 104.0
+        },
+        "id": 702035202,
+        "item_flags": 1115152,
+        "label": "Buffer Size",
+        "status_flags": 16777472,
+        "submission_order": 13,
+        "visible_label": "Buffer Size",
+        "window_name": "File Browser",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 278.0,
+          "x": 8.0,
+          "y": 94.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 21.0,
+          "x": 300.0,
+          "y": 104.0
+        },
+        "id": 754596254,
+        "item_flags": 1048,
+        "label": "-",
+        "status_flags": 256,
+        "submission_order": 14,
+        "visible_label": "-",
+        "window_name": "File Browser",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 21.0,
+          "x": 290.0,
+          "y": 94.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 21.0,
+          "x": 325.0,
+          "y": 104.0
+        },
+        "id": 173792886,
+        "item_flags": 1048,
+        "label": "+",
+        "status_flags": 256,
+        "submission_order": 15,
+        "visible_label": "+",
+        "window_name": "File Browser",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 21.0,
+          "x": 315.0,
+          "y": 94.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 278.0,
+          "x": 18.0,
+          "y": 198.0
+        },
+        "id": 544625829,
+        "item_flags": 1115152,
+        "label": "Stimulus Buffer Size",
+        "status_flags": 16777472,
+        "submission_order": 18,
+        "visible_label": "Stimulus Buffer Size",
+        "window_name": "File Browser",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 278.0,
+          "x": 8.0,
+          "y": 188.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 21.0,
+          "x": 300.0,
+          "y": 198.0
+        },
+        "id": 1517438642,
+        "item_flags": 1048,
+        "label": "-",
+        "status_flags": 256,
+        "submission_order": 19,
+        "visible_label": "-",
+        "window_name": "File Browser",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 21.0,
+          "x": 290.0,
+          "y": 188.0
+        }
+      },
+      {
+        "bounds": {
+          "height": 21.0,
+          "width": 21.0,
+          "x": 325.0,
+          "y": 198.0
+        },
+        "id": 2094244186,
+        "item_flags": 1048,
+        "label": "+",
+        "status_flags": 256,
+        "submission_order": 20,
+        "visible_label": "+",
+        "window_name": "File Browser",
+        "window_relative_bounds": {
+          "height": 21.0,
+          "width": 21.0,
+          "x": 315.0,
+          "y": 188.0
+        }
+      }
+    ],
+    "schema": "crimson.imgui_semantic_snapshot.v1",
+    "windows": [
+      {
+        "begin_order": 1,
+        "bounds": {
+          "height": 250.0,
+          "width": 560.0,
+          "x": 10.0,
+          "y": 10.0
+        },
+        "collapsed": false,
+        "name": "File Browser",
+        "parent_name": "",
+        "visible_name": "File Browser"
+      }
+    ]
+  },
+  "stable_frames": 60,
+  "state": "empty",
+  "stimulus": {
+    "camera_frame": -1,
+    "presented_frame": -1,
+    "ready": false,
+    "target_frame": -1
+  },
+  "target_frame": 0,
+  "video": "",
+  "viewports": {
+    "camera": {
+      "height": 0.0,
+      "width": 0.0,
+      "x": 0.0,
+      "y": 0.0
+    },
+    "crop_inset": {
+      "height": 0.0,
+      "width": 0.0,
+      "x": 0.0,
+      "y": 0.0
+    },
+    "crop_preview": {
+      "height": 0.0,
+      "width": 0.0,
+      "x": 0.0,
+      "y": 0.0
+    },
+    "stimulus_debug": {
+      "height": 0.0,
+      "width": 0.0,
+      "x": 0.0,
+      "y": 0.0
+    },
+    "stimulus_inset": {
+      "height": 0.0,
+      "width": 0.0,
+      "x": 0.0,
+      "y": 0.0
+    }
+  },
+  "write_contract": "read-only"
+}

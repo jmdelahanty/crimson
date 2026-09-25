@@ -1,0 +1,59 @@
+{
+  "schema_id": "crimson.canonical_detection_residency_handoff",
+  "schema_version": 1,
+  "date": "2026-07-26",
+  "verdict": {
+    "isolated_residency_gate_satisfied": true,
+    "full_archive_residency_gate_satisfied": true,
+    "residency_strategy_accepted_for_policy_review": true,
+    "production_residency_enabled": false,
+    "palette_physical_profile_promoted": false,
+    "original_25_store_matrix_cancelled": true,
+    "reduced_three_candidate_matrix_deferred": true
+  },
+  "source_identity": {
+    "contract_parent_commit": "81433985a6be17ae490e674db2b0043360db6b02",
+    "execution_head_commit": "34ff3c3",
+    "execution_worktree_dirty": true,
+    "limitation": "The evidence is immutable, but the execution used the listed dirty-worktree source hashes rather than a clean reproducible source commit."
+  },
+  "primary_artifacts": [
+    {
+      "path": "docs/crimson_macos_phase5o5_detection_residency_gate.md",
+      "sha256": "83ce7870443a11346dfed10bea084ad58827ebac4acea4fd93e9b6dbc71405aa"
+    },
+    {
+      "path": "docs/reference/crimson_canonical_detection_layout_matrix_workload_v1.json",
+      "sha256": "75d958f7ef4a7162b9b945a210c25de26fb7c3020ed7e9d9551753875bcb6d57"
+    },
+    {
+      "path": "docs/diagnostics/canonical_detection_residency_strategy_2026-07-26/summary.json",
+      "sha256": "ed3cc9ee22e46fe6582044e817c98bf577f84e66f725ab68646f83afd3462821"
+    },
+    {
+      "path": "docs/diagnostics/canonical_detection_residency_strategy_2026-07-26/residency_strategy_comparison.png",
+      "sha256": "e577b06d3c9e7a4be35c45fb278795ff50c7e5babeeb8423f884a503510ff748"
+    },
+    {
+      "path": "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/aggregate.json",
+      "sha256": "e42fce1de8346f321fec71512055ab2f1b9971372bb19267ae817c39bc7ed8ae"
+    },
+    {
+      "path": "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/full_archive_residency_comparison.png",
+      "sha256": "9f5e3cac53e4e4e2f84286b77718e53497a5d149ef243b19e24e5b7f6e72cabc"
+    }
+  ],
+  "execution_artifact_hashes": {
+    "canonical_detection_residency_benchmark": "eb83ec1c5b3700783216346e562a3de8fb82b2f2e4918c1121cda479801bf061",
+    "canonical_detection_full_archive_stage1_benchmark": "f539932f8fa6306e27bd332758b346b6387c3bd1f0629c005be80520cbc491df",
+    "src/canonical_detection_buffer.cpp": "158fc0f234d5bf3c44ed48642322889b178d40da07bba646abc6e2fc27a57a18",
+    "src/canonical_detection_buffer.h": "52afd6ede9c44ac03d6608c4068f8b3c68c297765020e2676df76ab491ffa5fc",
+    "src/zarr/canonical_detection_repository.h": "381107da9d127b41cbce57afc45dac643fd62f51b7d96bc1d99a1c0815d8240e",
+    "src/zarr/tensorstore_canonical_detection_repository.cpp": "b783428ecf75c78ad9df62fe90db6d9fcbe1ed30604fec56db9723a0680f85da",
+    "tools/canonical_detection_residency_benchmark.cpp": "f39505107e63de31ab8f1d77847f2539b9f8ac085d60850d72b9654cc3cea053",
+    "tools/canonical_detection_full_archive_stage1_benchmark.cpp": "aa4a2dfdc7405e1d2d86f7d69e3da89b0c391b080c19684b3eb17f13cde54114",
+    "tools/run_canonical_detection_residency_benchmark.py": "7cae1fdb2236cc92ae170acc01f213a465e810a7c16e00b0127b70d8848e9af1",
+    "tools/run_canonical_detection_full_archive_residency.py": "dbb781bcef0991077d3d71f46e83a5f6a9db1a07f3a9f7be79a8012b6c30577d"
+  },
+  "selection_semantics_warning": "The benchmark fixture is a canonical detect_runs surface declaring stage: detect. It does not validate the production rule that should prefer explicitly selected refined or corrected detections."
+}

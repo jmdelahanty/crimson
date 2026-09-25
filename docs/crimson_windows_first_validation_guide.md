@@ -14,10 +14,10 @@ Scope:
 
 Related docs:
 
-- [docs/crimson_windows_install_from_source.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_windows_install_from_source.md)
-- [docs/crimson_windows_trt10_cuda12.4_validation_record.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_windows_trt10_cuda12.4_validation_record.md)
-- [docs/crimson_supported_dependency_stack_matrix.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_supported_dependency_stack_matrix.md)
-- [docs/crimson_dependency_stack_promotion_process.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_dependency_stack_promotion_process.md)
+- [docs/crimson_windows_installation_procedures.md](/home/delahantyj@hhmi.org/gitrepos/crimson-ui-monolith/docs/crimson_windows_installation_procedures.md)
+- [docs/crimson_windows_trt10_cuda12.4_validation_record.md](/home/delahantyj@hhmi.org/gitrepos/crimson-ui-monolith/docs/crimson_windows_trt10_cuda12.4_validation_record.md)
+- [docs/crimson_supported_dependency_stack_matrix.md](/home/delahantyj@hhmi.org/gitrepos/crimson-ui-monolith/docs/crimson_supported_dependency_stack_matrix.md)
+- [docs/crimson_dependency_stack_promotion_process.md](/home/delahantyj@hhmi.org/gitrepos/crimson-ui-monolith/docs/crimson_dependency_stack_promotion_process.md)
 
 ---
 
@@ -64,6 +64,9 @@ Install or verify these first:
 - Windows SDK
 - CMake
 - Ninja
+- Python 3
+- NASM
+- vcpkg
 - current NVIDIA driver
 - CUDA Toolkit `12.4`
 
@@ -73,6 +76,94 @@ Recommended Visual Studio components:
 - MSVC v143 toolset
 - Windows 10 or Windows 11 SDK
 - C++ CMake tools for Windows
+
+Python is needed during configure because TensorStore's CMake path uses Python
+while generating its build files. It is not a run-only Crimson application
+dependency. If Python is missing, install it with one of:
+
+```powershell
+winget install --id Python.Python.3.12 -e
+```
+
+or:
+
+```powershell
+winget install --id Python.Python.3.11 -e
+```
+
+Then open a fresh x64 Developer PowerShell and verify:
+
+```powershell
+python --version
+```
+
+If `python` is not on `PATH`, the build helper also tries the Windows `py -3`
+launcher. You can verify that path with:
+
+```powershell
+py -3 --version
+```
+
+If Python is installed in a non-standard location, pass it explicitly:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\build_windows_app_drop.ps1 `
+  -Python3Executable "C:\Path\To\python.exe" `
+  -CleanInstall
+```
+
+NASM is needed during configure/build because TensorStore pulls in generated
+third-party code that enables CMake's `ASM_NASM` language. It is not a run-only
+Crimson application dependency.
+
+Install options:
+
+```powershell
+winget search NASM
+winget install --id NASM.NASM -e
+```
+
+If the winget package ID is unavailable on the machine, download the Windows
+64-bit installer from the official NASM release page:
+
+```text
+https://www.nasm.us/pub/nasm/releasebuilds/3.02/win64/
+```
+
+Then open a fresh x64 Developer PowerShell and verify:
+
+```powershell
+nasm -v
+```
+
+On some machines, the winget NASM installer places `nasm.exe` under the user
+profile but does not add it to `PATH`. Check:
+
+```powershell
+Test-Path "$env:LOCALAPPDATA\bin\NASM\nasm.exe"
+& "$env:LOCALAPPDATA\bin\NASM\nasm.exe" -v
+```
+
+The Crimson build helper probes this location directly. You can also add it to
+your user `PATH`:
+
+```powershell
+$nasmDir = "$env:LOCALAPPDATA\bin\NASM"
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+if (($userPath -split ';') -notcontains $nasmDir) {
+  [Environment]::SetEnvironmentVariable("Path", "$userPath;$nasmDir", "User")
+}
+```
+
+Open a new terminal after changing `PATH`.
+
+If NASM is installed in a non-standard location, pass it explicitly:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\build_windows_app_drop.ps1 `
+  -NasmExecutable "C:\Path\To\nasm.exe" `
+  -CleanInstall
+```
 
 Recommended Git setting:
 
@@ -85,10 +176,93 @@ Reason:
 - Crimson pulls in deep dependency trees
 - Windows path-length issues are avoidable and not worth tripping over
 
+The TensorStore configure path also generates very long object names. The build
+helper therefore uses a short default build directory, currently:
+
+```text
+build\w124n
+```
+
+If CMake fails during the generate step with `CMAKE_OBJECT_PATH_MAX` warnings,
+override the build tree explicitly:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\build_windows_app_drop.ps1 `
+  -BuildDir "C:\src\crimson\build\w124n" `
+  -CleanInstall
+```
+
 If the laptop uses hybrid graphics:
 
 - make sure you can force apps to the NVIDIA GPU from Windows graphics settings
   or the NVIDIA control panel
+
+### Supported Matrix
+
+Do not validate Windows by trying every possible dependency combination. Pick
+the intended supported stack and make failures explicit against that stack.
+
+Current target:
+
+```text
+Windows x64 + MSVC 2022 + CUDA 12.4 + TensorRT 10.0.1.6 + OpenCV 4.10.0
+```
+
+Source-build machines need the full build stack above. Run-only user machines
+should only need a supported Windows release, a compatible NVIDIA GPU/driver,
+and the published Crimson app drop with its runtime DLLs bundled.
+
+### vcpkg Packages
+
+Crimson's Windows source build uses vcpkg for non-NVIDIA C/C++ dependencies
+such as GLEW, GLFW, zlib, and HDF5. A missing `GLEW` configure error usually
+means vcpkg is absent, the packages have not been installed, or CMake was not
+given the vcpkg toolchain file. A missing `ZLIB` error during HDF5 discovery
+usually means `zlib:x64-windows` is absent from the same vcpkg triplet.
+
+Default source-build layout:
+
+```text
+C:\src\vcpkg
+C:\src\vcpkg\installed\x64-windows\bin
+```
+
+Manual first-time setup:
+
+```powershell
+cd C:\src
+git clone https://github.com/microsoft/vcpkg.git
+cd C:\src\vcpkg
+.\bootstrap-vcpkg.bat
+.\vcpkg.exe install glew:x64-windows glfw3:x64-windows zlib:x64-windows 'hdf5[cpp]:x64-windows'
+```
+
+Or use Crimson's helper from the Crimson repo root:
+
+```powershell
+cd C:\src\crimson
+powershell -ExecutionPolicy Bypass -File .\tools\setup_windows_vcpkg.ps1
+```
+
+The helper clones `https://github.com/microsoft/vcpkg.git` into
+`C:\src\vcpkg` if needed, bootstraps `vcpkg.exe`, and installs:
+
+- `glew:x64-windows`
+- `glfw3:x64-windows`
+- `zlib:x64-windows`
+- `hdf5[cpp]:x64-windows`
+
+If vcpkg is stored elsewhere:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\setup_windows_vcpkg.ps1 `
+  -VcpkgRoot "D:\src\vcpkg"
+```
+
+The one-command Crimson build helper passes
+`C:\src\vcpkg\scripts\buildsystems\vcpkg.cmake` to CMake automatically when it
+exists. If vcpkg is installed somewhere else, pass `-VcpkgRoot` and
+`-VcpkgTriplet` to `tools\build_windows_app_drop.ps1`.
 
 ---
 
@@ -115,6 +289,10 @@ Suggested meanings:
   - TensorRT unpacked root
 - `C:\third_party\ffmpeg-nvidia`
   - FFmpeg root for the Windows validation stack
+
+For FFmpeg, the root must directly contain `bin`, `include`, and `lib`. If an
+archive unzips as `C:\third_party\ffmpeg-nvidia\ffmpeg-nvidia\...`, flatten it
+or pass the nested root with `-FfmpegRoot`.
 
 ---
 
@@ -158,6 +336,36 @@ all exist after clone.
 Install:
 
 - CUDA Toolkit `12.4`
+
+Build-from-source machines need the CUDA Toolkit because CMake must find
+`nvcc.exe` and the CUDA development libraries. This is separate from the
+NVIDIA display driver. Do not use the default/express CUDA installer path on a
+user workstation if the goal is only to add the build toolkit.
+
+Driver-preserving install options:
+
+- in the graphical installer, choose a custom installation and deselect the
+  NVIDIA display driver / `Display.Driver` component
+- in silent mode, install only the toolkit subpackages Crimson needs and omit
+  `Display.Driver`
+
+Example silent install shape for CUDA `12.4`:
+
+```powershell
+.\cuda_12.4.0_551.61_windows.exe -s `
+  nvcc_12.4 `
+  cudart_12.4 `
+  npp_12.4 `
+  npp_dev_12.4 `
+  nvml_dev_12.4 `
+  visual_studio_integration_12.4 `
+  -n
+```
+
+The important constraint is that `Display.Driver` is not listed. If the
+existing NVIDIA driver is too old, update it as an explicit separate machine
+maintenance step rather than as a hidden side effect of Crimson dependency
+setup.
 
 Verify:
 
@@ -210,20 +418,62 @@ Prepare:
 At minimum, the root should provide headers and libraries in a structure that
 matches the CMake hints Crimson uses.
 
+Required source-build files:
+
+```text
+C:\third_party\ffmpeg-nvidia\include\libavformat\avformat.h
+C:\third_party\ffmpeg-nvidia\lib\avformat.lib
+C:\third_party\ffmpeg-nvidia\lib\avcodec.lib
+C:\third_party\ffmpeg-nvidia\lib\avutil.lib
+C:\third_party\ffmpeg-nvidia\lib\swscale.lib
+C:\third_party\ffmpeg-nvidia\lib\swresample.lib
+```
+
+The default helper expects those files directly under
+`C:\third_party\ffmpeg-nvidia`. If the archive unzipped one level too deep, the
+checker will fail until the directory is flattened:
+
+```text
+wrong: C:\third_party\ffmpeg-nvidia\ffmpeg-nvidia\include
+right: C:\third_party\ffmpeg-nvidia\include
+```
+
+The nested layout can also be used explicitly:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\build_windows_app_drop.ps1 `
+  -FfmpegRoot "C:\third_party\ffmpeg-nvidia\ffmpeg-nvidia" `
+  -CleanInstall
+```
+
 If you build FFmpeg with Media Autobuild Suite, stage it into Crimson's
 expected layout by running this from a Visual Studio developer shell:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\tools\stage_windows_ffmpeg_nvidia.ps1 `
   -MediaAutobuildRoot C:\src\media-autobuild_suite\local64 `
-  -OutputRoot C:\third_party\ffmpeg-nvidia
+  -OutputRoot C:\third_party\ffmpeg-nvidia `
+  -CleanOutput
 ```
 
-That script:
+The staging script:
 
 - verifies that the FFmpeg build exposes CUDA/NVENC
 - copies headers and runtime DLLs into `C:\third_party\ffmpeg-nvidia`
 - generates MSVC import libraries from the suite's `.def` files using `lib.exe`
+
+Check the staged FFmpeg/NVIDIA codec paths without running the full build:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\check_windows_build_dependency_paths.ps1
+```
+
+To also check whether the Media Autobuild Suite source tree is available:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\check_windows_build_dependency_paths.ps1 `
+  -CheckMediaAutobuild
+```
 
 ### Driver Check
 
@@ -237,10 +487,16 @@ Remember:
 
 - `nvidia-smi` reports driver-side CUDA capability
 - `nvcc --version` reports the toolkit Crimson compiles against
+- the `CUDA Version` printed by `nvidia-smi` is not proof that the CUDA Toolkit
+  is installed
+- a run-only Crimson app drop should need a compatible NVIDIA driver and the
+  DLLs bundled with the app, not a full CUDA Toolkit install
 
 See:
 
-- [docs/crimson_cuda_driver_toolkit_and_presets.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_cuda_driver_toolkit_and_presets.md)
+- [docs/crimson_cuda_driver_toolkit_and_presets.md](/home/delahantyj@hhmi.org/gitrepos/crimson-ui-monolith/docs/crimson_cuda_driver_toolkit_and_presets.md)
+- NVIDIA CUDA 12.4 Windows install guide:
+  `https://docs.nvidia.com/cuda/archive/12.4.0/cuda-installation-guide-microsoft-windows/index.html`
 
 ---
 
@@ -283,6 +539,20 @@ helper script from the repo root:
 . .\tools\set_windows_dependency_roots.ps1
 ```
 
+If PowerShell reports that running scripts is disabled on this system, allow
+scripts for only the current shell and rerun the helper:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+. .\tools\set_windows_dependency_roots.ps1
+```
+
+For a persistent per-user setting, use:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+```
+
 The helper script also prepends the common runtime DLL directories to `PATH`
 for the current PowerShell session so `redgui.exe` can be launched from the
 same shell without an extra manual `PATH` edit.
@@ -302,6 +572,53 @@ Alternative:
 - store machine-local overrides in `CMakeUserPresets.json`
 
 That file is ignored by git.
+
+---
+
+## Fast Path: Build A Staged App Drop
+
+From a Visual Studio Developer PowerShell in the repo root, the helper script
+can run the normal no-SFM bring-up path end to end:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\build_windows_app_drop.ps1 -CleanInstall
+```
+
+That script:
+
+- updates submodules
+- loads dependency roots through `tools/set_windows_dependency_roots.ps1`
+- uses a short default build tree, currently `build\w124n`, to avoid
+  TensorStore-generated Windows object path limits
+- validates FFmpeg headers/import libraries and NVIDIA codec import libraries
+- configures `windows-trt10-cuda12.4-no-sfm`
+- builds `Release`
+- installs to `dist\Crimson`
+- runs `dist\Crimson\check_crimson_runtime.ps1`
+
+To launch after a successful build:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\build_windows_app_drop.ps1 -SkipConfigure -SkipBuild -SkipInstall -Launch
+```
+
+Or build and launch in one pass:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\build_windows_app_drop.ps1 -CleanInstall -Launch
+```
+
+Useful overrides:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\build_windows_app_drop.ps1 `
+  -ThirdPartyRoot "D:\third_party" `
+  -InstallPrefix "D:\CrimsonStage\Crimson" `
+  -CleanInstall
+```
+
+If the fast path fails, continue with the manual steps below and report the
+first failing section header plus the first real error block.
 
 ---
 
@@ -327,7 +644,7 @@ Confirm:
 
 Also record the values in:
 
-- [docs/crimson_windows_trt10_cuda12.4_validation_record.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_windows_trt10_cuda12.4_validation_record.md)
+- [docs/crimson_windows_trt10_cuda12.4_validation_record.md](/home/delahantyj@hhmi.org/gitrepos/crimson-ui-monolith/docs/crimson_windows_trt10_cuda12.4_validation_record.md)
 
 ---
 
@@ -520,7 +837,7 @@ views.
 
 As you go, record the results in:
 
-- [docs/crimson_windows_trt10_cuda12.4_validation_record.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_windows_trt10_cuda12.4_validation_record.md)
+- [docs/crimson_windows_trt10_cuda12.4_validation_record.md](/home/delahantyj@hhmi.org/gitrepos/crimson-ui-monolith/docs/crimson_windows_trt10_cuda12.4_validation_record.md)
 
 At minimum, capture:
 
@@ -539,7 +856,7 @@ At minimum, capture:
 
 Use the promotion process:
 
-- [docs/crimson_dependency_stack_promotion_process.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_dependency_stack_promotion_process.md)
+- [docs/crimson_dependency_stack_promotion_process.md](/home/delahantyj@hhmi.org/gitrepos/crimson-ui-monolith/docs/crimson_dependency_stack_promotion_process.md)
 
 Possible outcomes:
 

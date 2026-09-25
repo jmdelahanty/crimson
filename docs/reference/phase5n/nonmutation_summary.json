@@ -1,0 +1,20 @@
+{
+  "schema": "crimson.phase5n.nonmutation-summary.v1",
+  "date": "2026-07-18",
+  "archive": "/groups/johnson/johnsonlab/jeremy/recordings/2026-06-14T21-12-08Z_arena_1_GoodCopBadCop/zarr/2026-06-14T21-12-08Z_arena_1_GoodCopBadCop_analysis.zarr",
+  "subtrees": [
+    "analysis/stimulus_runs",
+    "analysis/enums/events"
+  ],
+  "file_count_before": 6950,
+  "file_count_after": 6950,
+  "path_size_mtime_snapshot_sha256_before": "b2ebf7de22c4a24670aa164ee655e7cf72d627aae2b163e33e876485c4e8b3a5",
+  "path_size_mtime_snapshot_sha256_after": "b2ebf7de22c4a24670aa164ee655e7cf72d627aae2b163e33e876485c4e8b3a5",
+  "file_content_snapshot_sha256_before": "8e9a124cb58e1067b6677030da127fef077c8cd056969770a64fd34dc1db630f",
+  "file_content_snapshot_sha256_after": "8e9a124cb58e1067b6677030da127fef077c8cd056969770a64fd34dc1db630f",
+  "combined_snapshot_sha256_before": "aaefd0e77cbfd973ac89fa126de887ec5083fefbafc99410ac6379d5a16c00fb",
+  "combined_snapshot_sha256_after": "aaefd0e77cbfd973ac89fa126de887ec5083fefbafc99410ac6379d5a16c00fb",
+  "path_size_mtime_exact_match": true,
+  "file_content_sha256_exact_match": true,
+  "archive_unchanged": true
+}

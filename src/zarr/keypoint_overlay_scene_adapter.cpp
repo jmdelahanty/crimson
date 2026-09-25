@@ -1,0 +1,74 @@
+#include "zarr/keypoint_overlay_scene_adapter.h"
+
+#include <utility>
+#include <limits>
+
+namespace crimson::zarr {
+
+overlay::ReadOnlyOverlayInput
+makeKeypointOverlaySceneInput(const KeypointOverlayDescriptor &descriptor,
+                              const KeypointOverlayResolution &resolution,
+                              int surface_view, int64_t surface_frame,
+                              int overlay_view, int full_frame_width,
+                              int full_frame_height) {
+  overlay::ReadOnlyOverlayInput input;
+  input.identity = {surface_view, surface_frame, overlay_view,
+                    resolution.camera_frame};
+  input.source_width = full_frame_width;
+  input.source_height = full_frame_height;
+  input.keypoint_labels = descriptor.keypoint_labels;
+  input.skeleton_edges = descriptor.skeleton_edges;
+  input.show_boxes = false;
+  if (resolution.status != KeypointOverlayStatus::Mapped ||
+      resolution.camera_frame != surface_frame) {
+    return input;
+  }
+
+  input.detections.reserve(resolution.detections.size());
+  for (const auto &metadata : resolution.detections) {
+    overlay::DetectionOverlayInput detection;
+    detection.instance_key = metadata.instance_key;
+    detection.instance_key_valid = metadata.instance_key_valid;
+    if (metadata.full_frame_box_xywh) {
+      const auto &box = *metadata.full_frame_box_xywh;
+      detection.box = overlay::DetectionBoxInput{
+          {box[0], box[1], box[2], box[3]},
+          0,
+          metadata.detection_interpolated ? overlay::BoxProvenance::Interpolated
+                                          : overlay::BoxProvenance::Clean};
+    }
+    detection.keypoints.reserve(metadata.keypoints.size());
+    for (size_t index = 0; index < metadata.keypoints.size(); ++index) {
+      const auto point = metadata.keypoints[index];
+      const bool valid = metadata.keypoint_valid.empty() ||
+          (index < metadata.keypoint_valid.size() && metadata.keypoint_valid[index]);
+      const double nan = std::numeric_limits<double>::quiet_NaN();
+      detection.keypoints.push_back(valid ? overlay::Point{point.x, point.y}
+                                         : overlay::Point{nan, nan});
+    }
+    if (metadata.heading_origin) {
+      detection.heading_origin = overlay::Point{metadata.heading_origin->x,
+                                                metadata.heading_origin->y};
+    }
+    detection.heading_degrees = metadata.heading_degrees;
+    detection.heading_valid = metadata.heading_valid;
+    detection.detection_interpolated = metadata.detection_interpolated;
+    detection.refined_keypoints = metadata.refined_keypoints;
+    detection.keypoint_usable = metadata.keypoint_usable;
+    detection.keypoint_detection_interpolated =
+        metadata.keypoint_detection_interpolated;
+    detection.keypoint_flip_corrected = metadata.keypoint_flip_corrected;
+    detection.source_success = metadata.source_success;
+    detection.refined_success = metadata.refined_success;
+    detection.confidence_valid = metadata.confidence_valid;
+    detection.geometry_valid = metadata.geometry_valid;
+    detection.review_state_code = metadata.review_state_code;
+    detection.reason_code = metadata.reason_code;
+    detection.keypoint_edit_flags = metadata.keypoint_edit_flags;
+    detection.heading_from_body_frame = metadata.heading_from_body_frame;
+    input.detections.push_back(std::move(detection));
+  }
+  return input;
+}
+
+} // namespace crimson::zarr

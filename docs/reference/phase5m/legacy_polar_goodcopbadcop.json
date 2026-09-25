@@ -1,0 +1,127 @@
+{
+  "archive": "/groups/johnson/johnsonlab/jeremy/recordings/2026-06-14T21-12-08Z_arena_1_GoodCopBadCop/zarr/2026-06-14T21-12-08Z_arena_1_GoodCopBadCop_analysis.zarr",
+  "descriptor": {
+    "angle_convention": "arena_xy_y_down_positions_converted_to_math_y_up_angles; heading_degrees_ccw_from_+x; egocentric_bearing_deg=wrap(object_bearing-heading); 0=in_front; positive=anatomical_left",
+    "available": true,
+    "chaser_count": 2,
+    "component_name": "egocentric_bearing_v1_20260718",
+    "component_selection": "latest_complete",
+    "coordinate_frame": "arena_relative_canvas_px",
+    "row_count": 140035,
+    "run_name": "chaser_distance_v1_20260718",
+    "run_selection": "latest_complete"
+  },
+  "frames": [
+    {
+      "available": true,
+      "component_name": "egocentric_bearing_v1_20260718",
+      "points": [],
+      "radial_max_mm": 76.72962188720703,
+      "requested_camera_frame": 0,
+      "returned_camera_frame": 0,
+      "run_name": "chaser_distance_v1_20260718"
+    },
+    {
+      "available": true,
+      "component_name": "egocentric_bearing_v1_20260718",
+      "points": [],
+      "radial_max_mm": 76.72962188720703,
+      "requested_camera_frame": 56,
+      "returned_camera_frame": 56,
+      "run_name": "chaser_distance_v1_20260718"
+    },
+    {
+      "available": true,
+      "component_name": "egocentric_bearing_v1_20260718",
+      "points": [
+        {
+          "bearing_deg": 99.85935974121094,
+          "chaser_index": 0,
+          "color_provenance": "stimulus_protocol",
+          "distance_mm": 42.59596252441406,
+          "has_rgba": true,
+          "rgba": [
+            1.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        {
+          "bearing_deg": 43.18930435180664,
+          "chaser_index": 1,
+          "color_provenance": "stimulus_protocol",
+          "distance_mm": 52.74302673339844,
+          "has_rgba": true,
+          "rgba": [
+            0.08823490142822266,
+            0.0,
+            1.0,
+            1.0
+          ]
+        }
+      ],
+      "radial_max_mm": 76.72962188720703,
+      "requested_camera_frame": 1024,
+      "returned_camera_frame": 1024,
+      "run_name": "chaser_distance_v1_20260718"
+    },
+    {
+      "available": true,
+      "component_name": "egocentric_bearing_v1_20260718",
+      "points": [
+        {
+          "bearing_deg": -154.33348083496094,
+          "chaser_index": 0,
+          "color_provenance": "stimulus_protocol",
+          "distance_mm": 39.915348052978516,
+          "has_rgba": true,
+          "rgba": [
+            1.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        {
+          "bearing_deg": 134.40074157714844,
+          "chaser_index": 1,
+          "color_provenance": "stimulus_protocol",
+          "distance_mm": 39.24880599975586,
+          "has_rgba": true,
+          "rgba": [
+            0.08823490142822266,
+            0.0,
+            1.0,
+            1.0
+          ]
+        }
+      ],
+      "radial_max_mm": 76.72962188720703,
+      "requested_camera_frame": 7024,
+      "returned_camera_frame": 7024,
+      "run_name": "chaser_distance_v1_20260718"
+    },
+    {
+      "available": true,
+      "component_name": "egocentric_bearing_v1_20260718",
+      "points": [],
+      "radial_max_mm": 76.72962188720703,
+      "requested_camera_frame": 140034,
+      "returned_camera_frame": 140034,
+      "run_name": "chaser_distance_v1_20260718"
+    }
+  ],
+  "legacy_semantics": {
+    "color_precedence": [
+      "stimulus_protocol",
+      "component_summary",
+      "fixed_fallback_palette"
+    ],
+    "duplicate_camera_frame_policy": "first_row_wins",
+    "missing_frame_reports_available_when_dataset_loaded": true,
+    "radial_scale": "global_max_valid_distance_mm"
+  },
+  "loaded": true,
+  "schema": "crimson.phase5m.legacy-polar-probe.v1"
+}

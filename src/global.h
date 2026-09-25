@@ -11,12 +11,16 @@
 
 struct DecoderPerfSample {
     std::atomic<double> demux_ms{0.0};
-    std::atomic<double> decode_submit_ms{0.0};
+    std::atomic<double> decode_ms{0.0};
     std::atomic<double> nv12_to_rgba_ms{0.0};
     std::atomic<double> buffer_wait_ms{0.0};
     std::atomic<double> frame_write_ms{0.0};
     std::atomic<double> frame_total_ms{0.0};
+    std::atomic<double> packet_total_ms{0.0};
+    std::atomic<int> decode_returned{0};
+    std::atomic<int> demux_success{0};
     std::atomic<int> published_frame{-1};
+    std::atomic<uint64_t> sample_sequence{0};
 };
 
 extern std::vector<std::mutex> g_mutexes;

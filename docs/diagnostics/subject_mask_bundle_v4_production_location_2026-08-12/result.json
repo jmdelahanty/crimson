@@ -1,0 +1,90 @@
+{
+  "schema_id": "crimson.subject_mask.production_location_gate_result",
+  "schema_version": 1,
+  "date": "2026-08-12",
+  "status": "fail",
+  "compatibility_verdict": "pass",
+  "performance_verdict": "fail",
+  "activation_recommendation": "reject_pending_performance_resolution",
+  "production_activation_authorized": false,
+  "crimson_commit": "e570e46006f06f50687f86d9df108fcefb255c8c",
+  "platform": {
+    "architecture": "arm64",
+    "renderer": "Metal",
+    "window_backend": "GLFW/Cocoa"
+  },
+  "archive": "/Volumes/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095/zarr/sleepyfish_2026_05_05_17_45_30_cam2010095_analysis.zarr",
+  "bundle": {
+    "id": "subject_mask_bundle_sleepyfish_composable_modern_receipts_20260811_e523c816_v1",
+    "manifest_schema_version": 3,
+    "manifest_payload_digest": "582652a82631ceb41004c9612cfb6ad5426506a9c6c31de8fa007ab9b70f3f79",
+    "selector_eligible": false,
+    "activation_state": "deferred",
+    "ordinary_selection_absent": true
+  },
+  "aggregate": {
+    "path": "aggregate.json",
+    "sha256": "57ff6a5a4107a38f7040fe20874a5a40586f9e42a02272be13e4c6fb2fece316",
+    "trial_count": 10,
+    "repetitions_per_mode": 5
+  },
+  "correctness": {
+    "bundle_probe": "pass",
+    "direct_consolidated_metadata_equivalence": "pass",
+    "validated_array_declarations": 51,
+    "frame_count": 1188000,
+    "row_count": 1169010,
+    "instance_key_mismatches": 0,
+    "crop_placement_mismatches": 0,
+    "frame_offset_reads_per_process": [1],
+    "quality_payload_reads_during_presentation": 0,
+    "stale_visible_frames": 0,
+    "wrong_bundle_rejected": true,
+    "wrong_digest_rejected": true
+  },
+  "sampled_contours": {
+    "warm_random_p95_ms_median": 197.622709,
+    "warm_random_p95_ms_max": 233.74775,
+    "forward_page_p95_ms_median": 139.059458,
+    "reverse_page_p95_ms_median": 78.272292,
+    "deadline_miss_ratio_max": 0.0,
+    "first_presentation_readiness_ms_median": 5492.988209,
+    "process_file_reads_median": 1777,
+    "process_file_bytes_median": 206933033,
+    "peak_rss_bytes_max": 501481472,
+    "dense_mask_payload_reads": 0,
+    "source_point_count_payload_reads": 0
+  },
+  "dense_masks": {
+    "warm_random_p95_ms_median": 225.055083,
+    "warm_random_p95_ms_max": 230.172583,
+    "forward_page_p95_ms_median": 1031.720541,
+    "reverse_page_p95_ms_median": 924.386625,
+    "deadline_miss_ratio_max": 0.3333333333333333,
+    "first_presentation_readiness_ms_median": 2838.1265,
+    "process_file_reads_median": 5083,
+    "process_file_bytes_median": 76950209,
+    "peak_rss_bytes_max": 570834944
+  },
+  "gui_smoke": {
+    "status": "pass",
+    "media_provider": "recording_clip_index",
+    "frames": [1000, 54000],
+    "clip_boundary_frame": 54000,
+    "requested_presented_match": true,
+    "valid_video_buffer_slots": 6,
+    "sampled_contour_components_present": 4,
+    "roi_inset": "live_geometry_exact",
+    "visual_alignment": "pass",
+    "spatial_crop_boundary_roi_tested": false
+  },
+  "test_environment_limits": {
+    "portable_headless_tests_passed": 89,
+    "sandbox_blocked_macos_media_or_metal_tests": 10,
+    "sandbox_failure_reason": "no Metal device and AVFoundation fixture encoding unavailable",
+    "real_gui_metal_smoke_completed": true
+  },
+  "archive_writes": 0,
+  "selector_changes": 0,
+  "registry_changes": 0
+}

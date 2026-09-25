@@ -55,28 +55,31 @@ subgroup resolution, refined keypoints are flat — there is no subgroup chain.
 ## Required Arrays (for any selected keypoint group)
 
 - `frame_indices` (`int32`, shape `(n_rois,)`)
-- `keypoints_norm` (`float64`, shape `(n_rois, 3, 2)`) **or** `keypoints_img` (`float64`, shape `(n_rois, 3, 2)`)
+- `keypoints_norm` (`float64`, shape `(n_rois, n_keypoints, coord_dims)`) **or** `keypoints_img` (`float64`, shape `(n_rois, n_keypoints, coord_dims)`)
 - `heading` (`float64`, shape `(n_rois,)`)
 - `frame_counts` (`int32`, shape `(n_frames,)`)
 
-Keypoint order is `[bladder, eye_left, eye_right]` (confirmed by
-`keypoint_labels` attr, default `("bladder", "eye_left", "eye_right")`).
+Keypoint layout is schema-driven. Readers should treat `keypoint_labels`,
+`pose_schema.edges`, heading metadata, and `derived_metrics_schema` as
+authoritative when present rather than assuming a fixed 3-keypoint order or
+hard-coded derived geometry semantics.
 
 ## Optional Arrays
 
 ### Common to both raw and refined
 
-- `keypoints_roi` (`float64`, shape `(n_rois, 3, 2)`) — coordinates in ROI pixels
-- `keypoints_img` (`float64`, shape `(n_rois, 3, 2)`) — coordinates in full-image pixels
-- `keypoints_norm` (`float64`, shape `(n_rois, 3, 2)`) — normalized `[0,1]`
+- `keypoints_roi` (`float64`, shape `(n_rois, n_keypoints, coord_dims)`) — coordinates in ROI pixels
+- `keypoints_img` (`float64`, shape `(n_rois, n_keypoints, coord_dims)`) — coordinates in full-image pixels
+- `keypoints_norm` (`float64`, shape `(n_rois, n_keypoints, coord_dims)`) — normalized `[0,1]`
+  - current Crimson edit/write paths require `coord_dims >= 2` and operate on XY
 - `confidence` (`float64`, shape `(n_rois,)`) — overall keypoint score
-- `keypoint_confidences` (`float64`, shape `(n_rois, 3)`) — per-keypoint confidences (bladder, left, right)
+- `keypoint_confidences` (`float64`, shape `(n_rois, k)`) — per-keypoint confidences when present
 - `detection_source` (`int8`, shape `(n_rois,)`) — `0=real`, `1=interpolated`
 - `heading_finite` (`bool`, shape `(n_rois,)`) — strict `isfinite(heading)`
 - `heading_usable` (`bool`, shape `(n_rois,)`) — downstream heading gate (`success_gate && detection_source==0 && heading_finite`)
-- `triangle_area` (`float64`, shape `(n_rois,)`) — triangle area in pixels²
-- `triangle_angles` (`float64`, shape `(n_rois, 3)`) — angles in degrees, canonical order
-- `min_angle` (`float64`, shape `(n_rois,)`) — minimum triangle angle (degrees)
+- `triangle_area` (`float64`, shape `(n_rois,)`) — legacy 3-landmark triangle area in pixels²
+- `triangle_angles` (`float64`, shape `(n_rois, 3)`) — legacy 3-landmark angles in degrees
+- `min_angle` (`float64`, shape `(n_rois,)`) — minimum legacy triangle angle (degrees)
 - `n_rois` (`int32`, shape `(n_frames,)`) — legacy alias of `frame_counts`
 - `detection_indices` (`int32`, shape `(n_rois,)`, optional) — index into `crop_runs/<run>/roi_images`
 - `effective_threshold` (`float64`, shape `(n_rois,)`, optional) — per-ROI threshold used
@@ -267,6 +270,7 @@ Root-level attrs:
 ## Related Documents
 
 - `docs/crimson_detect_bbox_read_contract.md`
+- `docs/crimson_derived_metrics_contract.md`
 - `docs/crimson_keypoint_manual_write_contract.md`
 - `docs/crimson_keypoint_review_acceptance_contract.md`
 - `zarr_structure.md` (lines 153–182: raw keypoints, lines 301–348: refined keypoints)

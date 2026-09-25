@@ -1,0 +1,338 @@
+{
+  "access_metrics": {
+    "frame_requests": 7519,
+    "maximum_columns_per_batch": 22,
+    "payload_read_batches": 7519,
+    "payload_read_calls": 165418,
+    "quality_payload_read_calls": 0,
+    "read_failures": 0,
+    "rows_resolved": 7519
+  },
+  "archive_open_ms": 0.080416,
+  "archives": [
+    {
+      "cache_pool_bytes": 67108864,
+      "path": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/crimson_storage_candidates/sleepyfish_cam2010095_full_v8_20260730/keypoints/body_frame.zarr"
+    },
+    {
+      "cache_pool_bytes": 67108864,
+      "path": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/crimson_storage_candidates/sleepyfish_cam2010095_full_v8_20260730/keypoints/keypoint_quality.zarr"
+    },
+    {
+      "cache_pool_bytes": 67108864,
+      "path": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/crimson_storage_candidates/sleepyfish_cam2010095_full_v8_20260730/keypoints/raw_keypoints.zarr"
+    },
+    {
+      "cache_pool_bytes": 67108864,
+      "path": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/crimson_storage_candidates/sleepyfish_cam2010095_full_v8_20260730/keypoints/refined_keypoints.zarr"
+    }
+  ],
+  "buffer_metrics": {
+    "cache_hits": 0,
+    "discarded_results": 244,
+    "failed_frames": 0,
+    "last_error": "",
+    "maximum_resolve_ms": 4.812,
+    "missing_frames": 0,
+    "peak_cached_frames": 24,
+    "peak_pending_frames": 13,
+    "requests": 7289,
+    "resolved_frames": 7275
+  },
+  "classification": "full_duration_acceptance_process_trial",
+  "close_ms": 0.085458,
+  "configured_cache_bytes": 268435456,
+  "crimson_commit": "72ddcd1109078bf97c7e0063bfe9aa16abb63d79",
+  "deep_validate_identity": false,
+  "effective_deadline_miss_ratio": 0.0,
+  "first_presentation": {
+    "elapsed_ms": 4.846291,
+    "frame": 807358,
+    "logical_digest": "11824f8617c3d71a522031b6b1c7242859840cdf71eae0ad19c7e1f9a337d42c",
+    "observations": 1,
+    "physical": {
+      "cache_evictions": 0,
+      "cache_hits": 0,
+      "cache_misses": 66,
+      "file_batch_reads": 36,
+      "file_bytes": 7608016,
+      "file_reads": 40
+    }
+  },
+  "first_presentation_readiness_ms": 594.369583,
+  "forward_traversal": {
+    "average_ms": 0.057163302571428515,
+    "deadline_ms": 100.0,
+    "elapsed_ms": 200.0715589999998,
+    "logical_digest": "057637fb7deddaaa5c761c4463793edc04fb514ced00375f4cc6ab37ea1c6738",
+    "maximum_ms": 0.2205,
+    "observations": 3500,
+    "p50_ms": 0.054083,
+    "p95_ms": 0.082083,
+    "page_count": 50,
+    "page_frames": 70,
+    "page_p50_ms": 4.010541,
+    "page_p95_ms": 5.055791,
+    "physical": {
+      "cache_evictions": 0,
+      "cache_hits": 154042,
+      "cache_misses": 0,
+      "file_batch_reads": 0,
+      "file_bytes": 0,
+      "file_reads": 0
+    },
+    "post_warmup_deadline_miss_ratio": 0.0,
+    "post_warmup_deadline_misses": 0,
+    "post_warmup_measured_pages": 49,
+    "requests": 3500,
+    "warmup_pages": 1
+  },
+  "frame_count": 1188000,
+  "gate_failures": [],
+  "keypoint_count": 5,
+  "mode": "refined",
+  "open_metrics": {
+    "body_frame_offset_read_calls": 1,
+    "consolidated_array_declarations": 61,
+    "direct_metadata_reads": 65,
+    "exact_handle_open_ms": 3.4,
+    "exact_handle_opens": 61,
+    "fallback_dtype_opens": 0,
+    "fallback_metadata_reads": 0,
+    "identity_validation_ms": 47.520125,
+    "metadata_ms": 537.84825,
+    "quality_offset_read_calls": 0,
+    "quality_payload_reads": 0,
+    "raw_offset_read_calls": 1,
+    "retained_offset_bytes": 28512024,
+    "root_metadata_reads": 4,
+    "selected_offset_read_calls": 1,
+    "total_ms": 588.769167
+  },
+  "peak_rss_bytes": 264077312,
+  "process_physical": {
+    "cache_evictions": 777,
+    "cache_hits": 330722,
+    "cache_misses": 1018,
+    "file_batch_reads": 916,
+    "file_bytes": 637427384,
+    "file_reads": 938
+  },
+  "profile_promotion_verdict": "pending_paired_repetitions",
+  "random_process_first": {
+    "average_ms": 1.1832994999999995,
+    "elapsed_ms": 151.46233599999994,
+    "logical_digest": "4b042872c694751d757b9a444dab1619dfb17c2375a92328114355f1b224d5a1",
+    "maximum_ms": 3.58325,
+    "observations": 128,
+    "p50_ms": 1.330375,
+    "p95_ms": 2.795542,
+    "physical": {
+      "cache_evictions": 367,
+      "cache_hits": 10918,
+      "cache_misses": 461,
+      "file_batch_reads": 431,
+      "file_bytes": 325330156,
+      "file_reads": 440
+    },
+    "requests": 128
+  },
+  "random_warm": {
+    "average_ms": 0.9480690390624998,
+    "elapsed_ms": 121.35283699999998,
+    "logical_digest": "4b042872c694751d757b9a444dab1619dfb17c2375a92328114355f1b224d5a1",
+    "maximum_ms": 1.887084,
+    "observations": 128,
+    "p50_ms": 1.235041,
+    "p95_ms": 1.569333,
+    "physical": {
+      "cache_evictions": 389,
+      "cache_hits": 10743,
+      "cache_misses": 388,
+      "file_batch_reads": 368,
+      "file_bytes": 290862137,
+      "file_reads": 377
+    },
+    "requests": 128
+  },
+  "rapid_seeks": {
+    "cancelled_requests": 413,
+    "discarded_completions": 4,
+    "final_frame": 600862,
+    "final_readiness_ms": 0.588041,
+    "physical_transfer_upper_bound": {
+      "cache_evictions": 19,
+      "cache_hits": 730,
+      "cache_misses": 6,
+      "file_batch_reads": 6,
+      "file_bytes": 6495737,
+      "file_reads": 6
+    },
+    "requests": 32,
+    "stale_visible_frames": 0
+  },
+  "repetition": 2,
+  "repository_open_ms": 589.333042,
+  "reverse_traversal": {
+    "average_ms": 0.05288429714285702,
+    "deadline_ms": 100.0,
+    "elapsed_ms": 185.09503999999959,
+    "logical_digest": "b2bcf58fe65bc741045f385f82de8d059ee0d54db98e1a682664106ba26e5831",
+    "maximum_ms": 0.894208,
+    "observations": 3500,
+    "p50_ms": 0.050584,
+    "p95_ms": 0.071375,
+    "page_count": 50,
+    "page_frames": 70,
+    "page_p50_ms": 3.65725,
+    "page_p95_ms": 4.04925,
+    "physical": {
+      "cache_evictions": 2,
+      "cache_hits": 154048,
+      "cache_misses": 3,
+      "file_batch_reads": 3,
+      "file_bytes": 2158318,
+      "file_reads": 3
+    },
+    "post_warmup_deadline_miss_ratio": 0.0,
+    "post_warmup_deadline_misses": 0,
+    "post_warmup_measured_pages": 49,
+    "requests": 3500,
+    "warmup_pages": 1
+  },
+  "row_count": 1169010,
+  "scheduler_metrics": {
+    "accepted": 10793,
+    "cancelled": 3524,
+    "completed": 7522,
+    "discarded": 247,
+    "duplicates": 83844,
+    "failed": 0,
+    "peak_active": 4,
+    "peak_active_non_current": 1,
+    "peak_active_speculative": 1,
+    "peak_pending": 13,
+    "promotions": 120,
+    "reserved_current_frame_workers": 1,
+    "submissions": 94757,
+    "timing_by_priority": {
+      "current_frame": {
+        "completed": 384,
+        "queue_average_ms": 0.010102213541666665,
+        "queue_maximum_ms": 0.104666,
+        "queue_wait_over_1000_ms": 0,
+        "queue_wait_over_100_ms": 0,
+        "queue_wait_over_5000_ms": 0,
+        "service_average_ms": 0.7287701901041662,
+        "service_maximum_ms": 4.820583,
+        "service_over_1000_ms": 0,
+        "service_over_100_ms": 0,
+        "service_over_5000_ms": 0,
+        "started": 384
+      },
+      "history": {
+        "completed": 0,
+        "queue_average_ms": 0.0,
+        "queue_maximum_ms": 0.0,
+        "queue_wait_over_1000_ms": 0,
+        "queue_wait_over_100_ms": 0,
+        "queue_wait_over_5000_ms": 0,
+        "service_average_ms": 0.0,
+        "service_maximum_ms": 0.0,
+        "service_over_1000_ms": 0,
+        "service_over_100_ms": 0,
+        "service_over_5000_ms": 0,
+        "started": 0
+      },
+      "inspection": {
+        "completed": 0,
+        "queue_average_ms": 0.0,
+        "queue_maximum_ms": 0.0,
+        "queue_wait_over_1000_ms": 0,
+        "queue_wait_over_100_ms": 0,
+        "queue_wait_over_5000_ms": 0,
+        "service_average_ms": 0.0,
+        "service_maximum_ms": 0.0,
+        "service_over_1000_ms": 0,
+        "service_over_100_ms": 0,
+        "service_over_5000_ms": 0,
+        "started": 0
+      },
+      "speculative": {
+        "completed": 7138,
+        "queue_average_ms": 0.6560191480806953,
+        "queue_maximum_ms": 4.8355,
+        "queue_wait_over_1000_ms": 0,
+        "queue_wait_over_100_ms": 0,
+        "queue_wait_over_5000_ms": 0,
+        "service_average_ms": 0.055053934015130354,
+        "service_maximum_ms": 0.53,
+        "service_over_1000_ms": 0,
+        "service_over_100_ms": 0,
+        "service_over_5000_ms": 0,
+        "started": 7138
+      },
+      "visible_window": {
+        "completed": 0,
+        "queue_average_ms": 0.0,
+        "queue_maximum_ms": 0.0,
+        "queue_wait_over_1000_ms": 0,
+        "queue_wait_over_100_ms": 0,
+        "queue_wait_over_5000_ms": 0,
+        "service_average_ms": 0.0,
+        "service_maximum_ms": 0.0,
+        "service_over_1000_ms": 0,
+        "service_over_100_ms": 0,
+        "service_over_5000_ms": 0,
+        "started": 0
+      }
+    },
+    "timing_by_source": [
+      {
+        "archive": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/crimson_storage_candidates/sleepyfish_cam2010095_full_v8_20260730/keypoints/raw_keypoints.zarr",
+        "by_priority": {
+          "current_frame": {
+            "completed": 384,
+            "queue_average_ms": 0.010102213541666665,
+            "queue_maximum_ms": 0.104666,
+            "queue_wait_over_1000_ms": 0,
+            "queue_wait_over_100_ms": 0,
+            "queue_wait_over_5000_ms": 0,
+            "service_average_ms": 0.7287701901041662,
+            "service_maximum_ms": 4.820583,
+            "service_over_1000_ms": 0,
+            "service_over_100_ms": 0,
+            "service_over_5000_ms": 0,
+            "started": 384
+          },
+          "speculative": {
+            "completed": 7138,
+            "queue_average_ms": 0.6560191480806953,
+            "queue_maximum_ms": 4.8355,
+            "queue_wait_over_1000_ms": 0,
+            "queue_wait_over_100_ms": 0,
+            "queue_wait_over_5000_ms": 0,
+            "service_average_ms": 0.055053934015130354,
+            "service_maximum_ms": 0.53,
+            "service_over_1000_ms": 0,
+            "service_over_100_ms": 0,
+            "service_over_5000_ms": 0,
+            "started": 7138
+          }
+        },
+        "product": "keypoints",
+        "run": "refined_keypoints_runs/refined_keypoints_sleepyfish_cam2010095_full_v8_20260730"
+      }
+    ],
+    "work_exceptions": 0,
+    "workers": 4
+  },
+  "schema_id": "crimson.keypoint_v2.long_duration_benchmark",
+  "schema_version": 1,
+  "selected_manifest_digest": "f6348f815eea9c3ae574e0fe142e7906185aa4d95e8207d041b8d116ecc63fae",
+  "selected_run": "refined_keypoints_sleepyfish_cam2010095_full_v8_20260730",
+  "status": "pass",
+  "workload_path": "/Users/jmdelahanty/gitrepos/crimson-macos/tools/fixtures/keypoint_v2_long_duration_workload_v1.json",
+  "workload_sha256": "c419afa719b4d2b5c43e3fe1a0a89fe6e095c1f27024ebc14e1dcc0f63372ce2",
+  "worktree_dirty": false
+}
